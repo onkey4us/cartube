@@ -117,20 +117,32 @@ object YouTubeRepository {
         clickTrackingParams: String?
     ): MediaItemFormatInfo? {
         var lastInfo: MediaItemFormatInfo? = null
-        // Try up to 3 InnerTube client profiles automatically if YouTube blocks one
-        repeat(3) { attempt ->
+        // Cycle through InnerTube clients until we get a Media3-playable format (DASH / HLS / Progressive).
+        // Note: AppClient.TV (first client) often returns SABR-only formats which standard ExoPlayer cannot play.
+        repeat(10) { attempt ->
             val info = runCatching {
                 serviceManager.mediaItemService.getFormatInfo(videoId, clickTrackingParams)
             }.getOrNull()
             lastInfo = info
-            if (info != null && !info.isUnplayable && info.containsMedia()) {
+            if (isPlayableByMedia3(info)) {
                 return info
             }
-            if (attempt < 2) {
+            if (attempt < 9) {
                 serviceManager.switchNextClientNow()
             }
         }
         return lastInfo
+    }
+
+    fun isPlayableByMedia3(info: MediaItemFormatInfo?): Boolean {
+        if (info == null || info.isUnplayable) return false
+        val hasDirectAdaptive = info.adaptiveFormats?.any { !it.url.isNullOrBlank() } == true
+        val hasUrlFormats = info.urlFormats?.any { !it.url.isNullOrBlank() } == true
+        return info.containsDashFormats() ||
+            info.containsHlsUrl() ||
+            info.containsDashUrl() ||
+            hasDirectAdaptive ||
+            hasUrlFormats
     }
 
     suspend fun updateHistoryPosition(videoId: String, positionSec: Float) = withContext(Dispatchers.IO) {
