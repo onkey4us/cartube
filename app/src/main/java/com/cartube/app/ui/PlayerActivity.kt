@@ -2,13 +2,16 @@ package com.cartube.app.ui
 
 import android.content.ComponentName
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.TypedValue
 import android.view.GestureDetector
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.SeekBar
 import android.widget.Toast
@@ -18,6 +21,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.cartube.app.R
 import com.cartube.app.data.CarPrefs
@@ -64,6 +68,7 @@ class PlayerActivity : AppCompatActivity() {
         setupControls()
         setupUpNextList()
         setupTouchGestures()
+        applyResponsiveLayout()
         observePlaybackState()
     }
 
@@ -71,12 +76,31 @@ class PlayerActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         extractIntentExtras(intent)
+        applyResponsiveLayout()
         triggerPendingPlaybackIfReady()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyResponsiveLayout()
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (isInPictureInPictureMode) {
+            binding.upNextPanel.visibility = View.GONE
+            setControlsVisible(false)
+        } else {
+            applyResponsiveLayout()
+        }
     }
 
     override fun onStart() {
         super.onStart()
-        hideSystemBars()
+        applyResponsiveLayout()
+        if (!DisplayModeHelper.isEmbeddedOrPip(this)) {
+            hideSystemBars()
+        }
         connectToService()
         uiHandler.post(progressRunnable)
     }
@@ -86,10 +110,11 @@ class PlayerActivity : AppCompatActivity() {
         uiHandler.removeCallbacks(progressRunnable)
         uiHandler.removeCallbacks(hideControlsRunnable)
 
-        // Detach SurfaceView to free GPU/SurfaceFlinger immediately
-        binding.playerView.player = null
+        // Detach both video views to release GPU surfaces cleanly
+        binding.playerViewSurface.player = null
+        binding.playerViewTexture.player = null
 
-        // Auto switch to audio-only when minimized to Maps/Vietmap to cut CPU usage
+        // Only switch to audio-only when actually hidden/stopped (touching neighbor PiP only triggers onPause)
         val service = CarPlaybackService.instance
         if (service != null && prefs.backgroundAudioOnly && service.getPlayer().isPlaying) {
             service.setVideoEnabled(false)
@@ -97,6 +122,119 @@ class PlayerActivity : AppCompatActivity() {
 
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controllerFuture = null
+    }
+
+    private fun activePlayerView(): PlayerView {
+        // Use TextureView inside ActivityViewVirtualDisplay / PiP (fixes Android 9 SurfaceView black screen)
+        // Use SurfaceView on main fullscreen display #0 for minimum CPU/GPU load
+        return if (DisplayModeHelper.isEmbeddedOrPip(this)) {
+            binding.playerViewTexture
+        } else {
+            binding.playerViewSurface
+        }
+    }
+
+    private fun attachPlayerToActiveView() {
+        val player = CarPlaybackService.instance?.getPlayer() ?: return
+        val useTexture = DisplayModeHelper.isEmbeddedOrPip(this)
+        if (useTexture) {
+            binding.playerViewSurface.player = null
+            binding.playerViewSurface.visibility = View.GONE
+            binding.playerViewTexture.visibility = View.VISIBLE
+            if (binding.playerViewTexture.player !== player) {
+                binding.playerViewTexture.player = player
+            }
+        } else {
+            binding.playerViewTexture.player = null
+            binding.playerViewTexture.visibility = View.GONE
+            binding.playerViewSurface.visibility = View.VISIBLE
+            if (binding.playerViewSurface.player !== player) {
+                binding.playerViewSurface.player = player
+            }
+        }
+    }
+
+    private fun applyResponsiveLayout() {
+        val embedded = DisplayModeHelper.isEmbeddedOrPip(this)
+        val mode = DisplayModeHelper.getLayoutMode(this)
+
+        // Switch SurfaceView vs TextureView cleanly
+        if (embedded) {
+            binding.playerViewSurface.visibility = View.GONE
+            binding.playerViewTexture.visibility = View.VISIBLE
+        } else {
+            binding.playerViewTexture.visibility = View.GONE
+            binding.playerViewSurface.visibility = View.VISIBLE
+        }
+        attachPlayerToActiveView()
+
+        // Show "Full" button only when running inside a PiP slot
+        binding.btnFullscreen.visibility = if (embedded) View.VISIBLE else View.GONE
+
+        when (mode) {
+            DisplayModeHelper.LayoutMode.PIP_COMPACT -> {
+                // 360x712 narrow PiP slot on Beijing X7 home screen
+                binding.btnQuality.visibility = View.GONE
+                binding.btnAudioOnly.visibility = View.GONE
+                binding.btnRewind.visibility = View.GONE
+                binding.btnForward.visibility = View.GONE
+                binding.tvVideoChannel.visibility = View.GONE
+                resizeView(binding.btnPrev, 48)
+                resizeView(binding.btnPlayPause, 60)
+                resizeView(binding.btnNext, 48)
+                binding.upNextPanel.layoutParams = binding.upNextPanel.layoutParams.apply {
+                    width = ViewGroup.LayoutParams.MATCH_PARENT
+                }
+            }
+            DisplayModeHelper.LayoutMode.PIP_LARGE -> {
+                // 1061x712 / 1080x580 large PiP slot on Beijing X7 home screen
+                binding.btnQuality.visibility = View.VISIBLE
+                binding.btnAudioOnly.visibility = View.VISIBLE
+                binding.btnRewind.visibility = View.VISIBLE
+                binding.btnForward.visibility = View.VISIBLE
+                binding.tvVideoChannel.visibility = View.VISIBLE
+                resizeView(binding.btnPrev, 56)
+                resizeView(binding.btnRewind, 56)
+                resizeView(binding.btnPlayPause, 70)
+                resizeView(binding.btnForward, 56)
+                resizeView(binding.btnNext, 56)
+                binding.upNextPanel.layoutParams = binding.upNextPanel.layoutParams.apply {
+                    width = dpToPx(310)
+                }
+            }
+            DisplayModeHelper.LayoutMode.FULLSCREEN -> {
+                // 1920x720 main screen
+                binding.btnQuality.visibility = View.VISIBLE
+                binding.btnAudioOnly.visibility = View.VISIBLE
+                binding.btnRewind.visibility = View.VISIBLE
+                binding.btnForward.visibility = View.VISIBLE
+                binding.tvVideoChannel.visibility = View.VISIBLE
+                resizeView(binding.btnPrev, 68)
+                resizeView(binding.btnRewind, 68)
+                resizeView(binding.btnPlayPause, 86)
+                resizeView(binding.btnForward, 68)
+                resizeView(binding.btnNext, 68)
+                binding.upNextPanel.layoutParams = binding.upNextPanel.layoutParams.apply {
+                    width = dpToPx(360)
+                }
+            }
+        }
+    }
+
+    private fun resizeView(view: View, sizeDp: Int) {
+        val px = dpToPx(sizeDp)
+        view.layoutParams = view.layoutParams.apply {
+            width = px
+            height = px
+        }
+    }
+
+    private fun dpToPx(dp: Int): Int {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            dp.toFloat(),
+            resources.displayMetrics
+        ).toInt()
     }
 
     @Suppress("DEPRECATION")
@@ -117,7 +255,7 @@ class PlayerActivity : AppCompatActivity() {
         controllerFuture?.addListener(
             {
                 val service = CarPlaybackService.instance ?: return@addListener
-                binding.playerView.player = service.getPlayer()
+                attachPlayerToActiveView()
                 service.setVideoEnabled(!userForcedAudioOnly)
                 triggerPendingPlaybackIfReady()
                 updateQualityChip()
@@ -138,6 +276,12 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun setupControls() {
         binding.btnBack.setOnClickListener { finish() }
+
+        binding.btnFullscreen.setOnClickListener {
+            // Pop PlayerActivity out of the PiP slot onto Display #0 (1920x720)
+            val fullIntent = Intent(this, PlayerActivity::class.java)
+            DisplayModeHelper.launchOnMainDisplay(this, fullIntent)
+        }
 
         binding.btnPlayPause.setOnClickListener {
             val player = CarPlaybackService.instance?.getPlayer() ?: return@setOnClickListener
@@ -304,9 +448,9 @@ class PlayerActivity : AppCompatActivity() {
     private fun updateQualityChip(actualHeight: Int = PlaybackStateStore.state.value.actualVideoHeight) {
         val maxH = prefs.maxVideoHeight
         binding.btnQuality.text = if (actualHeight > 0) {
-            "${actualHeight}p (Max ${maxH}p)"
+            "${actualHeight}p/${maxH}p"
         } else {
-            "Max ${maxH}p"
+            "${maxH}p"
         }
     }
 
@@ -335,7 +479,7 @@ class PlayerActivity : AppCompatActivity() {
         uiHandler.removeCallbacks(hideControlsRunnable)
         if (visible) {
             scheduleAutoHide()
-        } else {
+        } else if (!DisplayModeHelper.isEmbeddedOrPip(this)) {
             hideSystemBars()
         }
     }

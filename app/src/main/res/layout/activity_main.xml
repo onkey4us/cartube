@@ -5,8 +5,9 @@
     android:background="@color/car_bg"
     android:orientation="horizontal">
 
-    <!-- Left Car Navigation Rail (Large 56dp+ touch targets) -->
+    <!-- Left Car Navigation Rail (Visible in Fullscreen 1920x720 & Large PiP 1061x712) -->
     <ScrollView
+        android:id="@+id/leftNavRail"
         android:layout_width="176dp"
         android:layout_height="match_parent"
         android:background="@color/car_surface"
@@ -16,98 +17,108 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="12dp">
+            android:padding="10dp">
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="14dp"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="12dp"
                 android:text="CarTube"
                 android:textColor="@color/car_accent"
-                android:textSize="22sp"
+                android:textSize="20sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/navHome"
                 android:layout_width="match_parent"
-                android:layout_height="56dp"
+                android:layout_height="52dp"
                 android:layout_marginBottom="6dp"
                 android:background="@drawable/bg_nav_item"
+                android:ellipsize="end"
                 android:gravity="center_vertical"
-                android:paddingHorizontal="14dp"
+                android:maxLines="1"
+                android:paddingHorizontal="12dp"
                 android:text="@string/nav_home"
                 android:textColor="@color/car_text_primary"
-                android:textSize="16sp"
+                android:textSize="15sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/navMusic"
                 android:layout_width="match_parent"
-                android:layout_height="56dp"
+                android:layout_height="52dp"
                 android:layout_marginBottom="6dp"
                 android:background="@drawable/bg_nav_item"
+                android:ellipsize="end"
                 android:gravity="center_vertical"
-                android:paddingHorizontal="14dp"
+                android:maxLines="1"
+                android:paddingHorizontal="12dp"
                 android:text="@string/nav_music"
                 android:textColor="@color/car_text_primary"
-                android:textSize="16sp"
+                android:textSize="15sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/navSubs"
                 android:layout_width="match_parent"
-                android:layout_height="56dp"
+                android:layout_height="52dp"
                 android:layout_marginBottom="6dp"
                 android:background="@drawable/bg_nav_item"
+                android:ellipsize="end"
                 android:gravity="center_vertical"
-                android:paddingHorizontal="14dp"
+                android:maxLines="1"
+                android:paddingHorizontal="12dp"
                 android:text="@string/nav_subscriptions"
                 android:textColor="@color/car_text_primary"
-                android:textSize="16sp"
+                android:textSize="15sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/navHistory"
                 android:layout_width="match_parent"
-                android:layout_height="56dp"
+                android:layout_height="52dp"
                 android:layout_marginBottom="6dp"
                 android:background="@drawable/bg_nav_item"
+                android:ellipsize="end"
                 android:gravity="center_vertical"
-                android:paddingHorizontal="14dp"
+                android:maxLines="1"
+                android:paddingHorizontal="12dp"
                 android:text="@string/nav_history"
                 android:textColor="@color/car_text_primary"
-                android:textSize="16sp"
+                android:textSize="15sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/navSearch"
                 android:layout_width="match_parent"
-                android:layout_height="56dp"
+                android:layout_height="52dp"
                 android:layout_marginBottom="6dp"
                 android:background="@drawable/bg_nav_item"
+                android:ellipsize="end"
                 android:gravity="center_vertical"
-                android:paddingHorizontal="14dp"
+                android:maxLines="1"
+                android:paddingHorizontal="12dp"
                 android:text="@string/nav_search"
                 android:textColor="@color/car_text_primary"
-                android:textSize="16sp"
+                android:textSize="15sp"
                 android:textStyle="bold" />
 
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
-                android:layout_marginVertical="10dp"
+                android:layout_marginVertical="8dp"
                 android:background="@color/car_divider" />
 
             <LinearLayout
                 android:id="@+id/navAccount"
                 android:layout_width="match_parent"
-                android:layout_height="56dp"
+                android:layout_height="52dp"
                 android:layout_marginBottom="6dp"
                 android:background="@drawable/bg_nav_item"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
-                android:paddingHorizontal="14dp">
+                android:paddingHorizontal="12dp">
 
                 <TextView
                     android:id="@+id/tvAccountLabel"
@@ -117,20 +128,22 @@
                     android:maxLines="1"
                     android:text="@string/nav_account"
                     android:textColor="@color/car_text_secondary"
-                    android:textSize="15sp"
+                    android:textSize="14sp"
                     android:textStyle="bold" />
             </LinearLayout>
 
             <TextView
                 android:id="@+id/navSettings"
                 android:layout_width="match_parent"
-                android:layout_height="56dp"
+                android:layout_height="52dp"
                 android:background="@drawable/bg_nav_item"
+                android:ellipsize="end"
                 android:gravity="center_vertical"
-                android:paddingHorizontal="14dp"
+                android:maxLines="1"
+                android:paddingHorizontal="12dp"
                 android:text="@string/nav_settings"
                 android:textColor="@color/car_text_secondary"
-                android:textSize="15sp"
+                android:textSize="14sp"
                 android:textStyle="bold" />
         </LinearLayout>
     </ScrollView>
@@ -142,14 +155,123 @@
         android:layout_weight="1"
         android:orientation="vertical">
 
+        <!-- Compact Horizontal Top Navigation Bar (Auto-shown in Narrow PiP 360x712) -->
+        <HorizontalScrollView
+            android:id="@+id/topCompactNavScroll"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:background="@color/car_surface"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="6dp">
+
+                <TextView
+                    android:id="@+id/compactHome"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/bg_nav_item"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:text="@string/nav_home"
+                    android:textColor="@color/car_text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/compactMusic"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/bg_nav_item"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:text="@string/nav_music"
+                    android:textColor="@color/car_text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/compactSubs"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/bg_nav_item"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:text="Kênh"
+                    android:textColor="@color/car_text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/compactHistory"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/bg_nav_item"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:text="@string/nav_history"
+                    android:textColor="@color/car_text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/compactSearch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/bg_nav_item"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:text="Tìm"
+                    android:textColor="@color/car_text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/compactAccount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/bg_nav_item"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:text="QR"
+                    android:textColor="@color/car_text_secondary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/compactSettings"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:background="@drawable/bg_nav_item"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:text="Cài đặt"
+                    android:textColor="@color/car_text_secondary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </HorizontalScrollView>
+
         <!-- Header + Search Bar -->
         <LinearLayout
+            android:id="@+id/headerContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingHorizontal="20dp"
-            android:paddingVertical="12dp">
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="10dp">
 
             <TextView
                 android:id="@+id/tvHeaderTitle"
@@ -157,19 +279,19 @@
                 android:layout_height="wrap_content"
                 android:text="@string/nav_home"
                 android:textColor="@color/car_text_primary"
-                android:textSize="22sp"
+                android:textSize="20sp"
                 android:textStyle="bold" />
 
             <LinearLayout
                 android:id="@+id/searchBarContainer"
                 android:layout_width="0dp"
-                android:layout_height="52dp"
-                android:layout_marginStart="20dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="12dp"
                 android:layout_weight="1"
                 android:background="@drawable/bg_card"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
-                android:paddingHorizontal="12dp"
+                android:paddingHorizontal="10dp"
                 android:visibility="gone">
 
                 <EditText
@@ -184,12 +306,12 @@
                     android:maxLines="1"
                     android:textColor="@color/car_text_primary"
                     android:textColorHint="@color/car_text_secondary"
-                    android:textSize="16sp" />
+                    android:textSize="15sp" />
 
                 <Button
                     android:id="@+id/btnSearchClear"
-                    android:layout_width="48dp"
-                    android:layout_height="44dp"
+                    android:layout_width="42dp"
+                    android:layout_height="40dp"
                     android:backgroundTint="@color/car_surface_elevated"
                     android:text="✕"
                     android:textColor="@color/car_text_primary" />
@@ -197,8 +319,8 @@
                 <Button
                     android:id="@+id/btnSearchSubmit"
                     android:layout_width="wrap_content"
-                    android:layout_height="44dp"
-                    android:layout_marginStart="8dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="6dp"
                     android:backgroundTint="@color/car_accent"
                     android:text="Tìm"
                     android:textColor="@color/car_text_primary" />
@@ -222,26 +344,26 @@
                     android:layout_height="0dp"
                     android:layout_weight="1"
                     android:clipToPadding="false"
-                    android:paddingHorizontal="14dp"
-                    android:paddingBottom="12dp" />
+                    android:paddingHorizontal="8dp"
+                    android:paddingBottom="10dp" />
 
                 <Button
                     android:id="@+id/btnLoadMore"
                     android:layout_width="match_parent"
-                    android:layout_height="52dp"
-                    android:layout_marginHorizontal="20dp"
-                    android:layout_marginBottom="10dp"
+                    android:layout_height="48dp"
+                    android:layout_marginHorizontal="12dp"
+                    android:layout_marginBottom="8dp"
                     android:backgroundTint="@color/car_surface_elevated"
                     android:text="@string/load_more"
                     android:textColor="@color/car_text_primary"
-                    android:textSize="15sp"
+                    android:textSize="14sp"
                     android:visibility="gone" />
             </LinearLayout>
 
             <ProgressBar
                 android:id="@+id/progressBar"
-                android:layout_width="52dp"
-                android:layout_height="52dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:layout_gravity="center"
                 android:visibility="gone" />
 
@@ -251,9 +373,9 @@
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"
                 android:gravity="center"
-                android:padding="28dp"
+                android:padding="20dp"
                 android:textColor="@color/car_text_secondary"
-                android:textSize="17sp"
+                android:textSize="15sp"
                 android:visibility="gone" />
 
             <LinearLayout
@@ -263,7 +385,7 @@
                 android:layout_gravity="center"
                 android:gravity="center"
                 android:orientation="vertical"
-                android:padding="24dp"
+                android:padding="20dp"
                 android:visibility="gone">
 
                 <TextView
@@ -272,15 +394,15 @@
                     android:layout_height="wrap_content"
                     android:gravity="center"
                     android:textColor="@color/car_text_primary"
-                    android:textSize="16sp" />
+                    android:textSize="15sp" />
 
                 <Button
                     android:id="@+id/btnRetry"
                     android:layout_width="wrap_content"
-                    android:layout_height="52dp"
-                    android:layout_marginTop="14dp"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="12dp"
                     android:backgroundTint="@color/car_accent"
-                    android:paddingHorizontal="28dp"
+                    android:paddingHorizontal="24dp"
                     android:text="@string/retry"
                     android:textColor="@color/car_text_primary" />
             </LinearLayout>
@@ -290,24 +412,24 @@
         <LinearLayout
             android:id="@+id/miniPlayerContainer"
             android:layout_width="match_parent"
-            android:layout_height="76dp"
+            android:layout_height="72dp"
             android:background="@color/car_surface_elevated"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingHorizontal="16dp"
+            android:paddingHorizontal="12dp"
             android:visibility="gone">
 
             <ImageView
                 android:id="@+id/ivMiniThumb"
-                android:layout_width="96dp"
-                android:layout_height="54dp"
+                android:layout_width="88dp"
+                android:layout_height="50dp"
                 android:scaleType="centerCrop"
                 android:src="@drawable/bg_thumb_placeholder" />
 
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginHorizontal="14dp"
+                android:layout_marginHorizontal="10dp"
                 android:layout_weight="1"
                 android:orientation="vertical">
 
@@ -318,7 +440,7 @@
                     android:ellipsize="end"
                     android:maxLines="1"
                     android:textColor="@color/car_text_primary"
-                    android:textSize="16sp"
+                    android:textSize="15sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -329,30 +451,30 @@
                     android:ellipsize="end"
                     android:maxLines="1"
                     android:textColor="@color/car_text_secondary"
-                    android:textSize="13sp" />
+                    android:textSize="12sp" />
             </LinearLayout>
 
             <ImageButton
                 android:id="@+id/btnMiniPrev"
-                android:layout_width="56dp"
-                android:layout_height="56dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:background="@drawable/bg_player_circle_btn"
                 android:contentDescription="Bài trước"
                 android:src="@drawable/ic_prev" />
 
             <ImageButton
                 android:id="@+id/btnMiniPlayPause"
-                android:layout_width="60dp"
-                android:layout_height="60dp"
-                android:layout_marginHorizontal="10dp"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:layout_marginHorizontal="8dp"
                 android:background="@drawable/bg_player_circle_btn"
                 android:contentDescription="Phát hoặc tạm dừng"
                 android:src="@drawable/ic_play" />
 
             <ImageButton
                 android:id="@+id/btnMiniNext"
-                android:layout_width="56dp"
-                android:layout_height="56dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:background="@drawable/bg_player_circle_btn"
                 android:contentDescription="Bài tiếp"
                 android:src="@drawable/ic_next" />

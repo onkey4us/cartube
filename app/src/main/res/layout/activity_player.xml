@@ -5,13 +5,23 @@
     android:layout_height="match_parent"
     android:background="#FF000000">
 
-    <!-- SurfaceView reduces GPU copy overhead on Android 9 i.MX8Q head units -->
+    <!-- SurfaceView for Fullscreen Display #0 (lowest CPU/GPU overhead) -->
     <androidx.media3.ui.PlayerView
-        android:id="@+id/playerView"
+        android:id="@+id/playerViewSurface"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         app:resize_mode="fit"
         app:surface_type="surface_view"
+        app:use_controller="false" />
+
+    <!-- TextureView for ActivityViewVirtualDisplay / PiP slots (fixes black screen & Z-order on Android 9) -->
+    <androidx.media3.ui.PlayerView
+        android:id="@+id/playerViewTexture"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone"
+        app:resize_mode="fit"
+        app:surface_type="texture_view"
         app:use_controller="false" />
 
     <!-- Audio-Only Black Overlay -->
@@ -22,23 +32,26 @@
         android:background="@color/car_bg"
         android:gravity="center"
         android:orientation="vertical"
+        android:padding="16dp"
         android:visibility="gone">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:gravity="center"
             android:text="CHẾ ĐỘ CHỈ PHÁT ÂM THANH"
             android:textColor="@color/car_accent"
-            android:textSize="22sp"
+            android:textSize="18sp"
             android:textStyle="bold" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="Đã tắt giải mã hình ảnh để giảm CPU và nhiệt độ cho đầu xe"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:text="Đã tắt giải mã hình ảnh để giảm CPU cho đầu xe"
             android:textColor="@color/car_text_secondary"
-            android:textSize="15sp" />
+            android:textSize="14sp" />
     </LinearLayout>
 
     <!-- Fullscreen Touch Layer (Tap toggle / Double-tap seek ±10s) -->
@@ -53,19 +66,19 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|center_horizontal"
-        android:layout_marginTop="76dp"
+        android:layout_marginTop="64dp"
         android:background="@drawable/bg_chip"
-        android:paddingHorizontal="18dp"
-        android:paddingVertical="10dp"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="8dp"
         android:textColor="@color/car_text_primary"
-        android:textSize="15sp"
+        android:textSize="14sp"
         android:textStyle="bold"
         android:visibility="gone" />
 
     <ProgressBar
         android:id="@+id/progressLoading"
-        android:layout_width="56dp"
-        android:layout_height="56dp"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
         android:layout_gravity="center"
         android:visibility="gone" />
 
@@ -75,7 +88,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="@color/car_overlay"
-        android:padding="20dp">
+        android:padding="14dp">
 
         <!-- Top Bar -->
         <LinearLayout
@@ -87,8 +100,8 @@
 
             <ImageButton
                 android:id="@+id/btnBack"
-                android:layout_width="56dp"
-                android:layout_height="56dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:background="@drawable/bg_player_circle_btn"
                 android:contentDescription="Quay lại"
                 android:src="@drawable/ic_back" />
@@ -96,7 +109,7 @@
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginHorizontal="14dp"
+                android:layout_marginHorizontal="10dp"
                 android:layout_weight="1"
                 android:orientation="vertical">
 
@@ -107,7 +120,7 @@
                     android:ellipsize="end"
                     android:maxLines="1"
                     android:textColor="@color/car_text_primary"
-                    android:textSize="19sp"
+                    android:textSize="17sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -117,40 +130,59 @@
                     android:ellipsize="end"
                     android:maxLines="1"
                     android:textColor="@color/car_text_secondary"
-                    android:textSize="14sp" />
+                    android:textSize="13sp" />
             </LinearLayout>
 
             <Button
                 android:id="@+id/btnQuality"
                 android:layout_width="wrap_content"
-                android:layout_height="48dp"
+                android:layout_height="44dp"
                 android:backgroundTint="@color/car_surface_elevated"
-                android:text="720p"
+                android:minWidth="0dp"
+                android:paddingHorizontal="10dp"
+                android:text="1080p"
                 android:textColor="@color/car_text_primary"
-                android:textSize="14sp" />
+                android:textSize="13sp" />
 
             <Button
                 android:id="@+id/btnAudioOnly"
                 android:layout_width="wrap_content"
-                android:layout_height="48dp"
-                android:layout_marginStart="8dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="6dp"
                 android:backgroundTint="@color/car_surface_elevated"
+                android:minWidth="0dp"
+                android:paddingHorizontal="10dp"
                 android:text="Chỉ tiếng"
                 android:textColor="@color/car_text_primary"
-                android:textSize="14sp" />
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/btnFullscreen"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_marginStart="6dp"
+                android:backgroundTint="@color/car_surface_elevated"
+                android:minWidth="0dp"
+                android:paddingHorizontal="10dp"
+                android:text="Full"
+                android:textColor="@color/car_text_primary"
+                android:textSize="13sp"
+                android:visibility="gone" />
 
             <Button
                 android:id="@+id/btnUpNext"
                 android:layout_width="wrap_content"
-                android:layout_height="48dp"
-                android:layout_marginStart="8dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="6dp"
                 android:backgroundTint="@color/car_accent"
-                android:text="Tiếp theo"
+                android:minWidth="0dp"
+                android:paddingHorizontal="10dp"
+                android:text="Tiếp"
                 android:textColor="@color/car_text_primary"
-                android:textSize="14sp" />
+                android:textSize="13sp" />
         </LinearLayout>
 
-        <!-- Center Giant Car Touch Transport Controls -->
+        <!-- Center Car Touch Transport Controls (auto-scaled per display mode) -->
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -160,43 +192,43 @@
 
             <ImageButton
                 android:id="@+id/btnPrev"
-                android:layout_width="68dp"
-                android:layout_height="68dp"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
                 android:background="@drawable/bg_player_circle_btn"
                 android:contentDescription="Video trước"
                 android:src="@drawable/ic_prev" />
 
             <ImageButton
                 android:id="@+id/btnRewind"
-                android:layout_width="68dp"
-                android:layout_height="68dp"
-                android:layout_marginStart="18dp"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:layout_marginStart="14dp"
                 android:background="@drawable/bg_player_circle_btn"
                 android:contentDescription="Lùi 10 giây"
                 android:src="@drawable/ic_rewind" />
 
             <ImageButton
                 android:id="@+id/btnPlayPause"
-                android:layout_width="86dp"
-                android:layout_height="86dp"
-                android:layout_marginHorizontal="22dp"
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:layout_marginHorizontal="18dp"
                 android:background="@drawable/bg_player_circle_btn"
                 android:contentDescription="Phát hoặc tạm dừng"
                 android:src="@drawable/ic_pause" />
 
             <ImageButton
                 android:id="@+id/btnForward"
-                android:layout_width="68dp"
-                android:layout_height="68dp"
-                android:layout_marginEnd="18dp"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:layout_marginEnd="14dp"
                 android:background="@drawable/bg_player_circle_btn"
                 android:contentDescription="Tua 10 giây"
                 android:src="@drawable/ic_forward" />
 
             <ImageButton
                 android:id="@+id/btnNext"
-                android:layout_width="68dp"
-                android:layout_height="68dp"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
                 android:background="@drawable/bg_player_circle_btn"
                 android:contentDescription="Video tiếp theo"
                 android:src="@drawable/ic_next" />
@@ -209,46 +241,46 @@
             android:layout_alignParentBottom="true"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingBottom="6dp">
+            android:paddingBottom="4dp">
 
             <TextView
                 android:id="@+id/tvCurrentTime"
-                android:layout_width="64dp"
+                android:layout_width="54dp"
                 android:layout_height="wrap_content"
                 android:gravity="center"
                 android:text="0:00"
                 android:textColor="@color/car_text_primary"
-                android:textSize="15sp"
+                android:textSize="13sp"
                 android:textStyle="bold" />
 
             <SeekBar
                 android:id="@+id/seekBar"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="40dp"
                 android:layout_weight="1"
                 android:progressTint="@color/car_accent"
                 android:thumbTint="@color/car_accent" />
 
             <TextView
                 android:id="@+id/tvTotalTime"
-                android:layout_width="64dp"
+                android:layout_width="54dp"
                 android:layout_height="wrap_content"
                 android:gravity="center"
                 android:text="0:00"
                 android:textColor="@color/car_text_secondary"
-                android:textSize="15sp" />
+                android:textSize="13sp" />
         </LinearLayout>
     </RelativeLayout>
 
     <!-- Slide-in Up Next Drawer -->
     <LinearLayout
         android:id="@+id/upNextPanel"
-        android:layout_width="360dp"
+        android:layout_width="340dp"
         android:layout_height="match_parent"
         android:layout_gravity="end"
         android:background="@color/car_surface"
         android:orientation="vertical"
-        android:padding="14dp"
+        android:padding="12dp"
         android:visibility="gone">
 
         <LinearLayout
@@ -256,7 +288,7 @@
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingBottom="10dp">
+            android:paddingBottom="8dp">
 
             <TextView
                 android:layout_width="0dp"
@@ -264,13 +296,13 @@
                 android:layout_weight="1"
                 android:text="Danh sách tiếp theo"
                 android:textColor="@color/car_text_primary"
-                android:textSize="18sp"
+                android:textSize="16sp"
                 android:textStyle="bold" />
 
             <Button
                 android:id="@+id/btnCloseUpNext"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
                 android:backgroundTint="@color/car_surface_elevated"
                 android:text="✕"
                 android:textColor="@color/car_text_primary" />

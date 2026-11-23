@@ -2,7 +2,9 @@ package com.cartube.app.ui
 
 import android.content.ComponentName
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Bundle
+import android.util.TypedValue
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -36,6 +38,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var videoAdapter: VideoAdapter
+    private lateinit var gridLayoutManager: GridLayoutManager
 
     private var currentTab: NavTab = NavTab.HOME
     private var currentGroup: MediaGroup? = null
@@ -54,15 +57,22 @@ class MainActivity : AppCompatActivity() {
         setupNavRail()
         setupSearchBar()
         setupMiniPlayer()
+        applyResponsiveLayout()
         observePlaybackState()
 
         selectTab(NavTab.HOME)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyResponsiveLayout()
     }
 
     override fun onStart() {
         super.onStart()
         connectMediaSession()
         updateAccountIndicator()
+        applyResponsiveLayout()
     }
 
     override fun onStop() {
@@ -70,6 +80,51 @@ class MainActivity : AppCompatActivity() {
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controllerFuture = null
         mediaController = null
+    }
+
+    private fun applyResponsiveLayout() {
+        val mode = DisplayModeHelper.getLayoutMode(this)
+        val widthDp = resources.configuration.screenWidthDp
+        when (mode) {
+            DisplayModeHelper.LayoutMode.PIP_COMPACT -> {
+                binding.leftNavRail.visibility = View.GONE
+                binding.topCompactNavScroll.visibility = View.VISIBLE
+                binding.headerContainer.visibility = if (currentTab == NavTab.SEARCH) View.VISIBLE else View.GONE
+                gridLayoutManager.spanCount = 1
+                binding.ivMiniThumb.visibility = View.GONE
+                binding.btnMiniPrev.visibility = View.GONE
+            }
+            DisplayModeHelper.LayoutMode.PIP_LARGE -> {
+                binding.leftNavRail.visibility = View.VISIBLE
+                binding.leftNavRail.layoutParams = binding.leftNavRail.layoutParams.apply {
+                    width = dpToPx(124)
+                }
+                binding.topCompactNavScroll.visibility = View.GONE
+                binding.headerContainer.visibility = View.VISIBLE
+                gridLayoutManager.spanCount = if (widthDp >= 900) 3 else 2
+                binding.ivMiniThumb.visibility = View.VISIBLE
+                binding.btnMiniPrev.visibility = View.VISIBLE
+            }
+            DisplayModeHelper.LayoutMode.FULLSCREEN -> {
+                binding.leftNavRail.visibility = View.VISIBLE
+                binding.leftNavRail.layoutParams = binding.leftNavRail.layoutParams.apply {
+                    width = dpToPx(176)
+                }
+                binding.topCompactNavScroll.visibility = View.GONE
+                binding.headerContainer.visibility = View.VISIBLE
+                gridLayoutManager.spanCount = 4
+                binding.ivMiniThumb.visibility = View.VISIBLE
+                binding.btnMiniPrev.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    private fun dpToPx(dp: Int): Int {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            dp.toFloat(),
+            resources.displayMetrics
+        ).toInt()
     }
 
     private fun connectMediaSession() {
@@ -87,8 +142,7 @@ class MainActivity : AppCompatActivity() {
         videoAdapter = VideoAdapter { item, _ ->
             openPlayer(item, videoAdapter.getCurrentItems())
         }
-        val spanCount = if (resources.configuration.screenWidthDp >= 1000) 4 else 3
-        val gridLayoutManager = GridLayoutManager(this, spanCount)
+        gridLayoutManager = GridLayoutManager(this, 3)
         binding.rvVideos.layoutManager = gridLayoutManager
         binding.rvVideos.adapter = videoAdapter
         binding.rvVideos.itemAnimator = null // Zero animation overhead on car head unit
@@ -99,6 +153,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupNavRail() {
+        // Left rail buttons
         binding.navHome.setOnClickListener { selectTab(NavTab.HOME) }
         binding.navMusic.setOnClickListener { selectTab(NavTab.MUSIC) }
         binding.navSubs.setOnClickListener { selectTab(NavTab.SUBSCRIPTIONS) }
@@ -110,6 +165,20 @@ class MainActivity : AppCompatActivity() {
         binding.navSettings.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
+
+        // Compact top bar buttons (for 360x712 narrow PiP slot)
+        binding.compactHome.setOnClickListener { selectTab(NavTab.HOME) }
+        binding.compactMusic.setOnClickListener { selectTab(NavTab.MUSIC) }
+        binding.compactSubs.setOnClickListener { selectTab(NavTab.SUBSCRIPTIONS) }
+        binding.compactHistory.setOnClickListener { selectTab(NavTab.HISTORY) }
+        binding.compactSearch.setOnClickListener { selectTab(NavTab.SEARCH) }
+        binding.compactAccount.setOnClickListener {
+            startActivity(Intent(this, LoginActivity::class.java))
+        }
+        binding.compactSettings.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+
         binding.btnRetry.setOnClickListener {
             if (currentTab == NavTab.SEARCH) {
                 performSearch(binding.etSearch.text?.toString().orEmpty())
@@ -191,18 +260,32 @@ class MainActivity : AppCompatActivity() {
 
     private fun selectTab(tab: NavTab) {
         currentTab = tab
-        val map = mapOf(
+        val railMap = mapOf(
             NavTab.HOME to binding.navHome,
             NavTab.MUSIC to binding.navMusic,
             NavTab.SUBSCRIPTIONS to binding.navSubs,
             NavTab.HISTORY to binding.navHistory,
             NavTab.SEARCH to binding.navSearch
         )
-        map.forEach { (key, view) ->
-            view.isSelected = key == tab
-        }
+        railMap.forEach { (key, view) -> view.isSelected = key == tab }
+
+        val compactMap = mapOf(
+            NavTab.HOME to binding.compactHome,
+            NavTab.MUSIC to binding.compactMusic,
+            NavTab.SUBSCRIPTIONS to binding.compactSubs,
+            NavTab.HISTORY to binding.compactHistory,
+            NavTab.SEARCH to binding.compactSearch
+        )
+        compactMap.forEach { (key, view) -> view.isSelected = key == tab }
 
         binding.searchBarContainer.visibility = if (tab == NavTab.SEARCH) View.VISIBLE else View.GONE
+        if (DisplayModeHelper.getLayoutMode(this) == DisplayModeHelper.LayoutMode.PIP_COMPACT) {
+            binding.headerContainer.visibility = if (tab == NavTab.SEARCH) View.VISIBLE else View.GONE
+            binding.tvHeaderTitle.visibility = View.GONE
+        } else {
+            binding.headerContainer.visibility = View.VISIBLE
+            binding.tvHeaderTitle.visibility = View.VISIBLE
+        }
         binding.tvHeaderTitle.text = when (tab) {
             NavTab.HOME -> getString(R.string.nav_home)
             NavTab.MUSIC -> getString(R.string.nav_music)
