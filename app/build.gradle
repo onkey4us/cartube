@@ -119,6 +119,7 @@ dependencies {
     implementation "androidx.media3:media3-exoplayer:$media3Version"
     implementation "androidx.media3:media3-exoplayer-dash:$media3Version"
     implementation "androidx.media3:media3-exoplayer-hls:$media3Version"
+    implementation 'org.chromium.net:cronet-api:' + cronetApiVersion
     implementation("androidx.media3:media3-datasource-cronet:$media3Version") {
         exclude group: 'org.chromium.net'
     }
