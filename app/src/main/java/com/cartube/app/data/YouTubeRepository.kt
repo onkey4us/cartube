@@ -22,8 +22,7 @@ data class FeedPage(
     val sourceGroup: MediaGroup?
 )
 
-data class PlaybackBundle(
-    val formatInfo: MediaItemFormatInfo,
+data class PlaybackExtras(
     val metadata: MediaItemMetadata?,
     val relatedVideos: List<VideoItem>,
     val sponsorSegments: List<SponsorSegment>
@@ -80,13 +79,19 @@ object YouTubeRepository {
         FeedPage(extractItems(next), next)
     }
 
-    suspend fun loadPlaybackBundle(
+    suspend fun loadFormatInfo(
         videoId: String,
-        clickTrackingParams: String?,
+        clickTrackingParams: String?
+    ): MediaItemFormatInfo = withContext(Dispatchers.IO) {
+        fetchFormatWithFallback(videoId, clickTrackingParams)
+            ?: throw IllegalStateException("Không lấy được luồng phát cho video này.")
+    }
+
+    suspend fun loadPlaybackExtras(
+        videoId: String,
         loadSponsorSegments: Boolean
-    ): PlaybackBundle = withContext(Dispatchers.IO) {
+    ): PlaybackExtras = withContext(Dispatchers.IO) {
         coroutineScope {
-            val formatDeferred = async { fetchFormatWithFallback(videoId, clickTrackingParams) }
             val metaDeferred = async {
                 runCatching { serviceManager.mediaItemService.getMetadata(videoId) }.getOrNull()
             }
@@ -96,15 +101,10 @@ object YouTubeRepository {
                     serviceManager.mediaItemService.getSponsorSegments(videoId, sponsorCategories).orEmpty()
                 }.getOrDefault(emptyList())
             }
-
-            val formatInfo = formatDeferred.await()
-                ?: throw IllegalStateException("Không lấy được luồng phát cho video này.")
             val metadata = metaDeferred.await()
             val related = buildRelatedList(metadata)
             val segments = sponsorDeferred.await()
-
-            PlaybackBundle(
-                formatInfo = formatInfo,
+            PlaybackExtras(
                 metadata = metadata,
                 relatedVideos = related,
                 sponsorSegments = segments

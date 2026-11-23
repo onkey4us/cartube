@@ -17,6 +17,8 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.HttpDataSource
+import androidx.media3.datasource.cronet.CronetDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.dash.DashMediaSource
@@ -36,6 +38,7 @@ import com.cartube.app.ui.PlayerActivity
 import com.liskovsoft.mediaserviceinterfaces.data.MediaFormat
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItemFormatInfo
 import com.liskovsoft.mediaserviceinterfaces.data.SponsorSegment
+import com.liskovsoft.sharedutils.cronet.CronetManager
 import com.liskovsoft.youtubeapi.service.YouTubeServiceManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,6 +49,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.Executors
 
 @UnstableApi
 class CarPlaybackService : MediaSessionService() {
@@ -57,7 +61,9 @@ class CarPlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val cronetExecutor = Executors.newCachedThreadPool()
     private var loadJob: Job? = null
+    private var extrasJob: Job? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var activeSegments: List<SponsorSegment> = emptyList()
@@ -86,22 +92,22 @@ class CarPlaybackService : MediaSessionService() {
         trackSelector = DefaultTrackSelector(this).apply {
             parameters = buildUponParameters()
                 .setMaxVideoSize(1920, prefs.maxVideoHeight)
-                .setForceHighestSupportedBitrate(true)
+                .setForceHighestSupportedBitrate(false)
                 .build()
         }
 
-        // Start bandwidth estimate at 12 Mbps so ExoPlayer picks sharp 1080p/720p immediately instead of blurry 240p/360p
+        // Start bandwidth estimate at 6 Mbps so ABR starts sharp (720p/1080p) and smoothly adapts on 4G without stuttering
         val bandwidthMeter = DefaultBandwidthMeter.Builder(this)
-            .setInitialBitrateEstimate(12_000_000L)
+            .setInitialBitrateEstimate(6_000_000L)
             .build()
 
-        // Lean buffer tuned for car head units (fast start, low RAM usage)
+        // Fast 1s playback start + generous 60s buffer ceiling to absorb mobile hotspot fluctuations
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                15_000, // minBufferMs
-                35_000, // maxBufferMs
-                1_500,  // bufferForPlaybackMs
-                3_000   // bufferForPlaybackAfterRebufferMs
+                20_000, // minBufferMs
+                60_000, // maxBufferMs
+                1_000,  // bufferForPlaybackMs (fast start)
+                2_000   // bufferForPlaybackAfterRebufferMs
             )
             .build()
 
@@ -189,7 +195,9 @@ class CarPlaybackService : MediaSessionService() {
     override fun onDestroy() {
         mainHandler.removeCallbacks(sponsorTickRunnable)
         loadJob?.cancel()
+        extrasJob?.cancel()
         serviceScope.cancel()
+        cronetExecutor.shutdown()
         mediaSession?.release()
         mediaSession = null
         exoPlayer.release()
@@ -232,30 +240,31 @@ class CarPlaybackService : MediaSessionService() {
         lastHistorySyncVideoId = null
         lastHistorySyncSec = -1L
 
+        // Stop previous media right away so track switching feels snappy
+        exoPlayer.stop()
+        exoPlayer.clearMediaItems()
+
         loadJob?.cancel()
+        extrasJob?.cancel()
+
+        // 1. Fetch stream URLs ONLY and start playback immediately (never block on SponsorBlock or /next!)
         loadJob = serviceScope.launch {
             try {
-                val bundle = YouTubeRepository.loadPlaybackBundle(
+                val formatInfo = YouTubeRepository.loadFormatInfo(
                     videoId = video.videoId,
-                    clickTrackingParams = video.clickTrackingParams,
-                    loadSponsorSegments = prefs.sponsorBlockEnabled
+                    clickTrackingParams = video.clickTrackingParams
                 )
 
                 val enrichedVideo = video.copy(
-                    title = bundle.formatInfo.title?.takeIf { it.isNotBlank() } ?: video.title,
-                    author = bundle.formatInfo.author?.takeIf { it.isNotBlank() } ?: video.author
+                    title = formatInfo.title?.takeIf { it.isNotBlank() } ?: video.title,
+                    author = formatInfo.author?.takeIf { it.isNotBlank() } ?: video.author
                 )
-
-                activeSegments = bundle.sponsorSegments
-                val mergedQueue = mergeQueueWithRelated(effectiveQueue, idx, bundle.relatedVideos)
 
                 PlaybackStateStore.update {
                     it.copy(
                         currentVideo = enrichedVideo,
-                        queue = mergedQueue,
+                        queue = effectiveQueue,
                         currentIndex = idx,
-                        relatedVideos = bundle.relatedVideos,
-                        sponsorSegments = bundle.sponsorSegments,
                         isLoading = false,
                         statusNotice = null,
                         errorMessage = null
@@ -263,7 +272,7 @@ class CarPlaybackService : MediaSessionService() {
                 }
 
                 val mediaSource = withContext(Dispatchers.IO) {
-                    buildMediaSource(bundle.formatInfo)
+                    buildMediaSource(formatInfo)
                 }
 
                 applyTrackPreferences()
@@ -276,6 +285,30 @@ class CarPlaybackService : MediaSessionService() {
                     it.copy(
                         isLoading = false,
                         errorMessage = e.message ?: "Không thể phát video này"
+                    )
+                }
+            }
+        }
+
+        // 2. Fetch Up Next metadata & SponsorBlock segments asynchronously in background
+        extrasJob = serviceScope.launch {
+            runCatching {
+                YouTubeRepository.loadPlaybackExtras(
+                    videoId = video.videoId,
+                    loadSponsorSegments = prefs.sponsorBlockEnabled
+                )
+            }.onSuccess { extras ->
+                if (PlaybackStateStore.state.value.currentVideo?.videoId != video.videoId) {
+                    return@onSuccess
+                }
+                activeSegments = extras.sponsorSegments
+                val curState = PlaybackStateStore.state.value
+                val mergedQueue = mergeQueueWithRelated(curState.queue, curState.currentIndex, extras.relatedVideos)
+                PlaybackStateStore.update {
+                    it.copy(
+                        queue = mergedQueue,
+                        relatedVideos = extras.relatedVideos,
+                        sponsorSegments = extras.sponsorSegments
                     )
                 }
             }
@@ -334,7 +367,7 @@ class CarPlaybackService : MediaSessionService() {
         val builder = trackSelector.buildUponParameters()
             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, !isVideoTrackEnabled)
             .setMaxVideoSize(maxWidth, maxHeight)
-            .setForceHighestSupportedBitrate(true)
+            .setForceHighestSupportedBitrate(false)
 
         if (prefs.blockAv1) {
             // Prefer hardware-decoded H.264 / VP9 on i.MX8Q instead of software AV1
@@ -344,6 +377,37 @@ class CarPlaybackService : MediaSessionService() {
         }
 
         trackSelector.parameters = builder.build()
+    }
+
+    private fun createHttpDataSourceFactory(
+        userAgent: String,
+        headers: Map<String, String>
+    ): HttpDataSource.Factory {
+        val cronetEngine = runCatching { CronetManager.getEngine(this) }.getOrNull()
+        if (cronetEngine != null) {
+            Log.i(TAG, "Using CronetDataSource (HTTP/3 QUIC + HTTP/2)")
+            return CronetDataSource.Factory(cronetEngine, cronetExecutor)
+                .setUserAgent(userAgent)
+                .setConnectionTimeoutMs(10_000)
+                .setReadTimeoutMs(12_000)
+                .setResetTimeoutOnRedirects(true)
+                .apply {
+                    if (headers.isNotEmpty()) {
+                        setDefaultRequestProperties(headers)
+                    }
+                }
+        }
+        Log.w(TAG, "Cronet unavailable, falling back to DefaultHttpDataSource")
+        return DefaultHttpDataSource.Factory()
+            .setUserAgent(userAgent)
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(10_000)
+            .setReadTimeoutMs(12_000)
+            .apply {
+                if (headers.isNotEmpty()) {
+                    setDefaultRequestProperties(headers)
+                }
+            }
     }
 
     private fun buildMediaSource(formatInfo: MediaItemFormatInfo): MediaSource {
@@ -367,16 +431,7 @@ class CarPlaybackService : MediaSessionService() {
         val userAgent = formatInfo.clientInfo?.userAgent?.takeIf { it.isNotBlank() }
             ?: "Mozilla/5.0 (Linux; Android 9; CarTube) AppleWebKit/537.36"
 
-        val dataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(userAgent)
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(15_000)
-            .apply {
-                if (headers.isNotEmpty()) {
-                    setDefaultRequestProperties(headers)
-                }
-            }
+        val dataSourceFactory = createHttpDataSourceFactory(userAgent, headers)
 
         // 1. Prefer HLS first for Live, VISIONOS/IOS, or when SABR is present alongside HLS
         // (VISIONOS/IOS HLS delivers full sharp 1080p H.264/HEVC without 403!)
@@ -443,7 +498,7 @@ class CarPlaybackService : MediaSessionService() {
 
     private fun buildDirectAdaptiveSource(
         formatInfo: MediaItemFormatInfo,
-        dataSourceFactory: DefaultHttpDataSource.Factory
+        dataSourceFactory: HttpDataSource.Factory
     ): MediaSource? {
         val adaptive = formatInfo.adaptiveFormats?.filter { !it.url.isNullOrBlank() } ?: return null
         if (adaptive.isEmpty()) return null
