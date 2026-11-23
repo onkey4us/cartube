@@ -13,6 +13,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -21,7 +22,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
-import androidx.media3.ui.PlayerView
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.cartube.app.R
 import com.cartube.app.data.CarPrefs
@@ -38,12 +39,20 @@ class PlayerActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityPlayerBinding
     private lateinit var prefs: CarPrefs
-    private lateinit var upNextAdapter: VideoAdapter
+    private lateinit var upNextAdapter: UpNextAdapter
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var userForcedAudioOnly: Boolean = false
     private var isSeeking: Boolean = false
     private var isControlsVisible: Boolean = true
+
+    /**
+     * false = Split Watch Mode (shows Video + Suggested Videos alongside/below).
+     * true  = Frame-Full Mode (expands Video to fill 100% of current container — stays inside PiP if in PiP!).
+     */
+    private var isFrameFull: Boolean = false
+    private var isZoomCrop: Boolean = false
+    private var usesOverlayControls: Boolean = false
     private var pendingVideo: VideoItem? = null
 
     private val uiHandler = Handler(Looper.getMainLooper())
@@ -87,7 +96,8 @@ class PlayerActivity : AppCompatActivity() {
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         if (isInPictureInPictureMode) {
-            binding.upNextPanel.visibility = View.GONE
+            isFrameFull = true
+            applyResponsiveLayout()
             setControlsVisible(false)
         } else {
             applyResponsiveLayout()
@@ -123,56 +133,248 @@ class PlayerActivity : AppCompatActivity() {
         controllerFuture = null
     }
 
-    private fun activePlayerView(): PlayerView {
-        // Use TextureView inside ActivityViewVirtualDisplay / PiP (fixes Android 9 SurfaceView black screen)
-        // Use SurfaceView on main fullscreen display #0 for minimum CPU/GPU load
-        return if (DisplayModeHelper.isEmbeddedOrPip(this)) {
-            binding.playerViewTexture
-        } else {
-            binding.playerViewSurface
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (isFrameFull) {
+            setFrameFullMode(false)
+            return
         }
+        @Suppress("DEPRECATION")
+        super.onBackPressed()
     }
 
     private fun attachPlayerToActiveView() {
-        val player = CarPlaybackService.instance?.getPlayer() ?: return
+        val player = CarPlaybackService.instance?.getPlayer()
         val useTexture = DisplayModeHelper.isEmbeddedOrPip(this)
+        val targetResizeMode = if (isFrameFull && isZoomCrop) {
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        } else {
+            AspectRatioFrameLayout.RESIZE_MODE_FIT
+        }
+
+        binding.playerViewSurface.setResizeMode(targetResizeMode)
+        binding.playerViewTexture.setResizeMode(targetResizeMode)
+
         if (useTexture) {
             binding.playerViewSurface.player = null
             binding.playerViewSurface.visibility = View.GONE
             binding.playerViewTexture.visibility = View.VISIBLE
-            if (binding.playerViewTexture.player !== player) {
+            if (player != null && binding.playerViewTexture.player !== player) {
                 binding.playerViewTexture.player = player
             }
         } else {
             binding.playerViewTexture.player = null
             binding.playerViewTexture.visibility = View.GONE
             binding.playerViewSurface.visibility = View.VISIBLE
-            if (binding.playerViewSurface.player !== player) {
+            if (player != null && binding.playerViewSurface.player !== player) {
                 binding.playerViewSurface.player = player
             }
+        }
+    }
+
+    private fun setFrameFullMode(full: Boolean) {
+        if (isFrameFull == full) return
+        isFrameFull = full
+        applyResponsiveLayout()
+        if (usesOverlayControls) {
+            setControlsVisible(true)
         }
     }
 
     private fun applyResponsiveLayout() {
         val embedded = DisplayModeHelper.isEmbeddedOrPip(this)
         val mode = DisplayModeHelper.getLayoutMode(this)
+        val widthDp = resources.configuration.screenWidthDp.coerceAtLeast(320)
+        val heightDp = resources.configuration.screenHeightDp.coerceAtLeast(320)
 
-        // Switch SurfaceView vs TextureView cleanly
-        if (embedded) {
-            binding.playerViewSurface.visibility = View.GONE
-            binding.playerViewTexture.visibility = View.VISIBLE
-        } else {
-            binding.playerViewTexture.visibility = View.GONE
-            binding.playerViewSurface.visibility = View.VISIBLE
-        }
         attachPlayerToActiveView()
 
-        // Show "Full" button only when running inside a PiP slot
-        binding.btnFullscreen.visibility = if (embedded) View.VISIBLE else View.GONE
+        // Update toggle labels & zoom button state
+        val toggleLabel = if (isFrameFull) "◫ Đề xuất" else "⛶ Full"
+        binding.btnToggleSplitTop.text = toggleLabel
+        binding.btnToggleSplitBottom.text = toggleLabel
+        binding.btnZoomMode.visibility = if (isFrameFull) View.VISIBLE else View.GONE
+        binding.btnZoomMode.text = if (isZoomCrop) "Tràn khung" else "Vừa khung"
 
+        if (isFrameFull) {
+            // ==================== FRAME-FULL MODE (Inside PiP OR on Main Car Screen) ====================
+            usesOverlayControls = true
+            binding.playerRoot.orientation = LinearLayout.HORIZONTAL
+            binding.upNextDivider.visibility = View.GONE
+            binding.upNextPanel.visibility = View.GONE
+            binding.watchDockPanel.visibility = View.GONE
+
+            binding.leftMainPane.layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0f
+            )
+            binding.videoStageFrame.layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0f
+            )
+
+            // Show "⤢ Toàn xe" ONLY when inside a PiP slot so it never confuses with in-frame Full
+            binding.btnPopOutCar.visibility = if (embedded) View.VISIBLE else View.GONE
+
+            configureOverlayButtonScale(mode)
+            binding.controlsOverlay.visibility = if (isControlsVisible) View.VISIBLE else View.GONE
+            if (isControlsVisible) {
+                scheduleAutoHide()
+            }
+            return
+        }
+
+        // ==================== SPLIT WATCH MODE (Video + Suggested Videos) ====================
         when (mode) {
             DisplayModeHelper.LayoutMode.PIP_COMPACT -> {
-                // 360x712 narrow PiP slot on Beijing X7 home screen
+                // 360x712 narrow portrait PiP slot: Top 16:9 Video + Compact Dock + Bottom Suggested List
+                usesOverlayControls = false
+                uiHandler.removeCallbacks(hideControlsRunnable)
+                binding.controlsOverlay.visibility = View.GONE
+
+                binding.playerRoot.orientation = LinearLayout.VERTICAL
+                binding.leftMainPane.layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    0f
+                )
+
+                val videoHeightPx = dpToPx((widthDp * 9) / 16)
+                binding.videoStageFrame.layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    videoHeightPx,
+                    0f
+                )
+
+                binding.watchDockPanel.visibility = View.VISIBLE
+                binding.watchDockPanel.layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    0f
+                )
+                binding.tvDockTitle.maxLines = 1
+                binding.dockMetaRow.visibility = View.GONE
+                binding.btnDockRewind.visibility = View.GONE
+                binding.btnDockForward.visibility = View.GONE
+
+                binding.upNextDivider.visibility = View.VISIBLE
+                binding.upNextDivider.layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dpToPx(1)
+                )
+
+                binding.upNextPanel.visibility = View.VISIBLE
+                binding.upNextPanel.layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f
+                )
+                binding.btnSidebarPopOutCar.visibility = if (embedded) View.VISIBLE else View.GONE
+                upNextAdapter.setThumbnailWidthDp(112)
+            }
+
+            DisplayModeHelper.LayoutMode.PIP_LARGE -> {
+                // 1061x712 / 1080x580 Large PiP slot:
+                // Left (~63%): Top 16:9 Video + Bottom Persistent Watch Dock (Title, Seek, Controls, Full, Toàn xe)
+                // Right (~37%): Full-height Suggested Videos List
+                usesOverlayControls = false
+                uiHandler.removeCallbacks(hideControlsRunnable)
+                binding.controlsOverlay.visibility = View.GONE
+
+                binding.playerRoot.orientation = LinearLayout.HORIZONTAL
+                binding.leftMainPane.layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    63f
+                )
+
+                val leftWidthDp = (widthDp * 63) / 100
+                val idealVideoHeightDp = (leftWidthDp * 9) / 16
+                val maxVideoHeightDp = (heightDp - 186).coerceAtLeast(180)
+                val finalVideoHeightPx = dpToPx(idealVideoHeightDp.coerceAtMost(maxVideoHeightDp))
+
+                binding.videoStageFrame.layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    finalVideoHeightPx,
+                    0f
+                )
+
+                binding.watchDockPanel.visibility = View.VISIBLE
+                binding.watchDockPanel.layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f
+                )
+                binding.tvDockTitle.maxLines = 2
+                binding.dockMetaRow.visibility = View.VISIBLE
+                binding.btnDockPopOutCar.visibility = if (embedded) View.VISIBLE else View.GONE
+                binding.btnDockRewind.visibility = View.VISIBLE
+                binding.btnDockForward.visibility = View.VISIBLE
+
+                binding.upNextDivider.visibility = View.VISIBLE
+                binding.upNextDivider.layoutParams = LinearLayout.LayoutParams(
+                    dpToPx(1),
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+
+                binding.upNextPanel.visibility = View.VISIBLE
+                binding.upNextPanel.layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    37f
+                )
+                binding.btnSidebarPopOutCar.visibility = View.GONE
+                upNextAdapter.setThumbnailWidthDp(126)
+            }
+
+            DisplayModeHelper.LayoutMode.FULLSCREEN -> {
+                // 1920x720 Main Car Screen (8:3):
+                // Left (67% = 1280x720 exact 16:9!) + Right (33% = 640x720 Suggested Videos)
+                usesOverlayControls = true
+                binding.watchDockPanel.visibility = View.GONE
+
+                binding.playerRoot.orientation = LinearLayout.HORIZONTAL
+                binding.leftMainPane.layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    67f
+                )
+                binding.videoStageFrame.layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0f
+                )
+
+                binding.upNextDivider.visibility = View.VISIBLE
+                binding.upNextDivider.layoutParams = LinearLayout.LayoutParams(
+                    dpToPx(1),
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+
+                binding.upNextPanel.visibility = View.VISIBLE
+                binding.upNextPanel.layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    33f
+                )
+                binding.btnPopOutCar.visibility = View.GONE
+                binding.btnSidebarPopOutCar.visibility = View.GONE
+                upNextAdapter.setThumbnailWidthDp(156)
+
+                configureOverlayButtonScale(mode)
+                binding.controlsOverlay.visibility = if (isControlsVisible) View.VISIBLE else View.GONE
+                if (isControlsVisible) {
+                    scheduleAutoHide()
+                }
+            }
+        }
+    }
+
+    private fun configureOverlayButtonScale(mode: DisplayModeHelper.LayoutMode) {
+        when (mode) {
+            DisplayModeHelper.LayoutMode.PIP_COMPACT -> {
                 binding.btnQuality.visibility = View.GONE
                 binding.btnAudioOnly.visibility = View.GONE
                 binding.btnRewind.visibility = View.GONE
@@ -181,12 +383,8 @@ class PlayerActivity : AppCompatActivity() {
                 resizeView(binding.btnPrev, 48)
                 resizeView(binding.btnPlayPause, 60)
                 resizeView(binding.btnNext, 48)
-                binding.upNextPanel.layoutParams = binding.upNextPanel.layoutParams.apply {
-                    width = ViewGroup.LayoutParams.MATCH_PARENT
-                }
             }
             DisplayModeHelper.LayoutMode.PIP_LARGE -> {
-                // 1061x712 / 1080x580 large PiP slot on Beijing X7 home screen
                 binding.btnQuality.visibility = View.VISIBLE
                 binding.btnAudioOnly.visibility = View.VISIBLE
                 binding.btnRewind.visibility = View.VISIBLE
@@ -197,25 +395,18 @@ class PlayerActivity : AppCompatActivity() {
                 resizeView(binding.btnPlayPause, 70)
                 resizeView(binding.btnForward, 56)
                 resizeView(binding.btnNext, 56)
-                binding.upNextPanel.layoutParams = binding.upNextPanel.layoutParams.apply {
-                    width = dpToPx(310)
-                }
             }
             DisplayModeHelper.LayoutMode.FULLSCREEN -> {
-                // 1920x720 main screen
                 binding.btnQuality.visibility = View.VISIBLE
                 binding.btnAudioOnly.visibility = View.VISIBLE
                 binding.btnRewind.visibility = View.VISIBLE
                 binding.btnForward.visibility = View.VISIBLE
                 binding.tvVideoChannel.visibility = View.VISIBLE
-                resizeView(binding.btnPrev, 68)
-                resizeView(binding.btnRewind, 68)
-                resizeView(binding.btnPlayPause, 86)
-                resizeView(binding.btnForward, 68)
-                resizeView(binding.btnNext, 68)
-                binding.upNextPanel.layoutParams = binding.upNextPanel.layoutParams.apply {
-                    width = dpToPx(360)
-                }
+                resizeView(binding.btnPrev, 66)
+                resizeView(binding.btnRewind, 66)
+                resizeView(binding.btnPlayPause, 84)
+                resizeView(binding.btnForward, 66)
+                resizeView(binding.btnNext, 66)
             }
         }
     }
@@ -254,7 +445,9 @@ class PlayerActivity : AppCompatActivity() {
                 service.setVideoEnabled(!userForcedAudioOnly)
                 triggerPendingPlaybackIfReady()
                 updateQualityChip()
-                scheduleAutoHide()
+                if (usesOverlayControls) {
+                    scheduleAutoHide()
+                }
             },
             ContextCompat.getMainExecutor(this)
         )
@@ -267,101 +460,141 @@ class PlayerActivity : AppCompatActivity() {
         service.playVideo(video)
     }
 
+    private fun popOutToMainCarDisplay() {
+        val fullIntent = Intent(this, PlayerActivity::class.java)
+        DisplayModeHelper.launchOnMainDisplay(this, fullIntent)
+    }
+
+    private fun togglePlayPause() {
+        val player = CarPlaybackService.instance?.getPlayer() ?: return
+        if (player.isPlaying) player.pause() else player.play()
+        if (usesOverlayControls) scheduleAutoHide()
+    }
+
+    private fun cycleQuality() {
+        val nextHeight = when (prefs.maxVideoHeight) {
+            480 -> 720
+            720 -> 1080
+            else -> 480
+        }
+        CarPlaybackService.instance?.updateMaxVideoHeight(nextHeight)
+        updateQualityChip()
+        Toast.makeText(this, "Giới hạn chất lượng: ${nextHeight}p", Toast.LENGTH_SHORT).show()
+        if (usesOverlayControls) scheduleAutoHide()
+    }
+
+    private fun toggleAudioOnly() {
+        userForcedAudioOnly = !userForcedAudioOnly
+        CarPlaybackService.instance?.setVideoEnabled(!userForcedAudioOnly)
+        updateAudioOnlyUi()
+        if (usesOverlayControls) scheduleAutoHide()
+    }
+
     private fun setupControls() {
+        // Back to video browse list
         binding.btnBack.setOnClickListener { finish() }
+        binding.btnDockBack.setOnClickListener { finish() }
 
-        binding.btnFullscreen.setOnClickListener {
-            // Pop PlayerActivity out of the PiP slot onto Display #0 (1920x720)
-            val fullIntent = Intent(this, PlayerActivity::class.java)
-            DisplayModeHelper.launchOnMainDisplay(this, fullIntent)
+        // Separate "⤢ Toàn xe" button: pops CarTube out of PiP slot onto 1920x720 Display #0
+        binding.btnPopOutCar.setOnClickListener { popOutToMainCarDisplay() }
+        binding.btnDockPopOutCar.setOnClickListener { popOutToMainCarDisplay() }
+        binding.btnSidebarPopOutCar.setOnClickListener { popOutToMainCarDisplay() }
+
+        // In-Frame Full toggle (stays inside PiP if running in PiP!)
+        val toggleFrameFullClick = View.OnClickListener {
+            setFrameFullMode(!isFrameFull)
+        }
+        binding.btnToggleSplitTop.setOnClickListener(toggleFrameFullClick)
+        binding.btnToggleSplitBottom.setOnClickListener(toggleFrameFullClick)
+        binding.btnDockFullFrame.setOnClickListener { setFrameFullMode(true) }
+        binding.btnSidebarFullFrame.setOnClickListener { setFrameFullMode(true) }
+
+        // Fit vs Zoom-to-fill toggle when in Frame-Full mode
+        binding.btnZoomMode.setOnClickListener {
+            isZoomCrop = !isZoomCrop
+            attachPlayerToActiveView()
+            binding.btnZoomMode.text = if (isZoomCrop) "Tràn khung" else "Vừa khung"
+            showQuickSeekHint(if (isZoomCrop) "Chế độ: Tràn đầy khung" else "Chế độ: Vừa tỉ lệ gốc")
+            if (usesOverlayControls) scheduleAutoHide()
         }
 
-        binding.btnPlayPause.setOnClickListener {
-            val player = CarPlaybackService.instance?.getPlayer() ?: return@setOnClickListener
-            if (player.isPlaying) player.pause() else player.play()
-            scheduleAutoHide()
-        }
+        // Play / Pause
+        binding.btnPlayPause.setOnClickListener { togglePlayPause() }
+        binding.btnDockPlayPause.setOnClickListener { togglePlayPause() }
 
+        // Previous / Next
         binding.btnPrev.setOnClickListener {
             CarPlaybackService.instance?.playPrevious()
-            scheduleAutoHide()
+            if (usesOverlayControls) scheduleAutoHide()
+        }
+        binding.btnDockPrev.setOnClickListener {
+            CarPlaybackService.instance?.playPrevious()
         }
 
         binding.btnNext.setOnClickListener {
             CarPlaybackService.instance?.playNext()
-            scheduleAutoHide()
+            if (usesOverlayControls) scheduleAutoHide()
+        }
+        binding.btnDockNext.setOnClickListener {
+            CarPlaybackService.instance?.playNext()
         }
 
+        // ±10s Seek
         binding.btnRewind.setOnClickListener {
             CarPlaybackService.instance?.seekBy(-10_000L)
-            scheduleAutoHide()
+            if (usesOverlayControls) scheduleAutoHide()
+        }
+        binding.btnDockRewind.setOnClickListener {
+            CarPlaybackService.instance?.seekBy(-10_000L)
         }
 
         binding.btnForward.setOnClickListener {
             CarPlaybackService.instance?.seekBy(10_000L)
-            scheduleAutoHide()
+            if (usesOverlayControls) scheduleAutoHide()
+        }
+        binding.btnDockForward.setOnClickListener {
+            CarPlaybackService.instance?.seekBy(10_000L)
         }
 
-        binding.btnQuality.setOnClickListener {
-            val nextHeight = when (prefs.maxVideoHeight) {
-                480 -> 720
-                720 -> 1080
-                else -> 480
-            }
-            CarPlaybackService.instance?.updateMaxVideoHeight(nextHeight)
-            updateQualityChip()
-            Toast.makeText(this, "Giới hạn chất lượng: ${nextHeight}p", Toast.LENGTH_SHORT).show()
-            scheduleAutoHide()
-        }
+        // Quality & Audio-Only
+        binding.btnQuality.setOnClickListener { cycleQuality() }
+        binding.btnDockQuality.setOnClickListener { cycleQuality() }
 
-        binding.btnAudioOnly.setOnClickListener {
-            userForcedAudioOnly = !userForcedAudioOnly
-            CarPlaybackService.instance?.setVideoEnabled(!userForcedAudioOnly)
-            updateAudioOnlyUi()
-            scheduleAutoHide()
-        }
+        binding.btnAudioOnly.setOnClickListener { toggleAudioOnly() }
+        binding.btnDockAudioOnly.setOnClickListener { toggleAudioOnly() }
 
-        binding.btnUpNext.setOnClickListener {
-            val show = binding.upNextPanel.visibility != View.VISIBLE
-            binding.upNextPanel.visibility = if (show) View.VISIBLE else View.GONE
-            if (show) {
-                uiHandler.removeCallbacks(hideControlsRunnable)
-            } else {
-                scheduleAutoHide()
-            }
-        }
-
-        binding.btnCloseUpNext.setOnClickListener {
-            binding.upNextPanel.visibility = View.GONE
-            scheduleAutoHide()
-        }
-
-        binding.seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+        // Overlay & Dock SeekBars
+        val seekListener = object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
-                    binding.tvCurrentTime.text = VideoAdapter.formatDuration(progress.toLong())
+                    val formatted = VideoAdapter.formatDuration(progress.toLong())
+                    binding.tvCurrentTime.text = formatted
+                    binding.tvDockCurrentTime.text = formatted
                 }
             }
 
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {
+            override fun onStartTrackingTouch(bar: SeekBar?) {
                 isSeeking = true
                 uiHandler.removeCallbacks(hideControlsRunnable)
             }
 
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+            override fun onStopTrackingTouch(bar: SeekBar?) {
                 isSeeking = false
-                seekBar?.let {
+                bar?.let {
                     CarPlaybackService.instance?.getPlayer()?.seekTo(it.progress.toLong())
                 }
-                scheduleAutoHide()
+                if (usesOverlayControls) scheduleAutoHide()
             }
-        })
+        }
+        binding.seekBar.setOnSeekBarChangeListener(seekListener)
+        binding.dockSeekBar.setOnSeekBarChangeListener(seekListener)
     }
 
     private fun setupUpNextList() {
-        upNextAdapter = VideoAdapter(compact = true) { item, _ ->
-            binding.upNextPanel.visibility = View.GONE
+        upNextAdapter = UpNextAdapter { item, _ ->
+            // Keep Split Watch Mode open while switching smoothly to the selected related video
             CarPlaybackService.instance?.playFromUpNext(item)
+            binding.rvUpNext.scrollToPosition(0)
         }
         binding.rvUpNext.layoutManager = LinearLayoutManager(this)
         binding.rvUpNext.adapter = upNextAdapter
@@ -371,10 +604,15 @@ class PlayerActivity : AppCompatActivity() {
     private fun setupTouchGestures() {
         val detector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                if (binding.upNextPanel.visibility == View.VISIBLE) {
-                    binding.upNextPanel.visibility = View.GONE
-                } else {
+                if (usesOverlayControls) {
                     setControlsVisible(!isControlsVisible)
+                } else {
+                    val player = CarPlaybackService.instance?.getPlayer()
+                    if (player != null) {
+                        val willPlay = !player.isPlaying
+                        if (willPlay) player.play() else player.pause()
+                        showQuickSeekHint(if (willPlay) "▶ Tiếp tục phát" else "⏸ Tạm dừng")
+                    }
                 }
                 return true
             }
@@ -398,7 +636,9 @@ class PlayerActivity : AppCompatActivity() {
         binding.tvStatusNotice.text = text
         binding.tvStatusNotice.visibility = View.VISIBLE
         uiHandler.postDelayed({
-            if (PlaybackStateStore.state.value.statusNotice == null) {
+            if (PlaybackStateStore.state.value.statusNotice == null &&
+                PlaybackStateStore.state.value.errorMessage == null
+            ) {
                 binding.tvStatusNotice.visibility = View.GONE
             }
         }, 1_000L)
@@ -407,14 +647,31 @@ class PlayerActivity : AppCompatActivity() {
     private fun observePlaybackState() {
         lifecycleScope.launch {
             PlaybackStateStore.state.collectLatest { state ->
-                binding.tvVideoTitle.text = state.currentVideo?.title.orEmpty()
-                binding.tvVideoChannel.text = state.currentVideo?.author.orEmpty()
+                val title = state.currentVideo?.title.orEmpty()
+                val channel = state.currentVideo?.author.orEmpty()
+
+                binding.tvVideoTitle.text = title
+                binding.tvVideoChannel.text = channel
+                binding.tvDockTitle.text = title
+                binding.tvDockChannel.text = channel
+
                 binding.progressLoading.visibility = if (state.isLoading) View.VISIBLE else View.GONE
-                binding.btnPlayPause.setImageResource(
-                    if (state.isPlaying) R.drawable.ic_pause else R.drawable.ic_play
-                )
+
+                val playIcon = if (state.isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+                binding.btnPlayPause.setImageResource(playIcon)
+                binding.btnDockPlayPause.setImageResource(playIcon)
 
                 upNextAdapter.submitList(state.upNextVideos)
+                binding.tvUpNextHeader.text = if (state.upNextVideos.isNotEmpty()) {
+                    "Tiếp theo (${state.upNextVideos.size})"
+                } else {
+                    "Tiếp theo"
+                }
+
+                val showLoadingUpNext = state.isLoadingUpNext && state.upNextVideos.isEmpty()
+                binding.upNextLoadingRow.visibility = if (showLoadingUpNext) View.VISIBLE else View.GONE
+                binding.tvUpNextEmpty.visibility =
+                    if (!state.isLoadingUpNext && state.upNextVideos.isEmpty()) View.VISIBLE else View.GONE
 
                 if (!state.statusNotice.isNullOrBlank()) {
                     binding.tvStatusNotice.text = state.statusNotice
@@ -434,17 +691,21 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun updateQualityChip(actualHeight: Int = PlaybackStateStore.state.value.actualVideoHeight) {
         val maxH = prefs.maxVideoHeight
-        binding.btnQuality.text = if (actualHeight > 0) {
+        val label = if (actualHeight > 0) {
             "${actualHeight}p/${maxH}p"
         } else {
             "${maxH}p"
         }
+        binding.btnQuality.text = label
+        binding.btnDockQuality.text = label
     }
 
     private fun updateAudioOnlyUi() {
         val isAudio = PlaybackStateStore.state.value.isAudioOnly || userForcedAudioOnly
         binding.audioOnlyOverlay.visibility = if (isAudio) View.VISIBLE else View.GONE
-        binding.btnAudioOnly.text = if (isAudio) "Bật hình" else "Chỉ tiếng"
+        val label = if (isAudio) "Bật hình" else "Chỉ tiếng"
+        binding.btnAudioOnly.text = label
+        binding.btnDockAudioOnly.text = label
     }
 
     private fun updateSeekProgress() {
@@ -453,15 +714,29 @@ class PlayerActivity : AppCompatActivity() {
         val duration = player.duration.coerceAtLeast(0L)
         val position = player.currentPosition.coerceAtLeast(0L)
         if (duration > 0L) {
-            binding.seekBar.max = duration.toInt()
-            binding.seekBar.progress = position.toInt()
-            binding.tvCurrentTime.text = VideoAdapter.formatDuration(position)
-            binding.tvTotalTime.text = VideoAdapter.formatDuration(duration)
+            val maxInt = duration.toInt()
+            val posInt = position.toInt()
+            val curText = VideoAdapter.formatDuration(position)
+            val totText = VideoAdapter.formatDuration(duration)
+
+            binding.seekBar.max = maxInt
+            binding.seekBar.progress = posInt
+            binding.tvCurrentTime.text = curText
+            binding.tvTotalTime.text = totText
+
+            binding.dockSeekBar.max = maxInt
+            binding.dockSeekBar.progress = posInt
+            binding.tvDockCurrentTime.text = curText
+            binding.tvDockTotalTime.text = totText
         }
     }
 
     private fun setControlsVisible(visible: Boolean) {
         isControlsVisible = visible
+        if (!usesOverlayControls) {
+            binding.controlsOverlay.visibility = View.GONE
+            return
+        }
         binding.controlsOverlay.visibility = if (visible) View.VISIBLE else View.GONE
         uiHandler.removeCallbacks(hideControlsRunnable)
         if (visible) {
@@ -472,6 +747,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun scheduleAutoHide() {
+        if (!usesOverlayControls) return
         uiHandler.removeCallbacks(hideControlsRunnable)
         uiHandler.postDelayed(hideControlsRunnable, 4_500L)
     }
@@ -508,7 +784,7 @@ class PlayerActivity : AppCompatActivity() {
                 KeyEvent.KEYCODE_ENTER -> {
                     val p = service?.getPlayer() ?: return super.dispatchKeyEvent(event)
                     if (p.isPlaying) p.pause() else p.play()
-                    setControlsVisible(true)
+                    if (usesOverlayControls) setControlsVisible(true)
                     return true
                 }
                 KeyEvent.KEYCODE_MEDIA_PLAY -> {

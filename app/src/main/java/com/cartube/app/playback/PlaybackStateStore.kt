@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 data class PlaybackUiState(
     val currentVideo: VideoItem? = null,
     val upNextVideos: List<VideoItem> = emptyList(),
+    val isLoadingUpNext: Boolean = false,
     val canGoPrevious: Boolean = false,
     val sponsorSegments: List<SponsorSegment> = emptyList(),
     val isLoading: Boolean = false,

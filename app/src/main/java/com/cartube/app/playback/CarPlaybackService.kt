@@ -279,6 +279,7 @@ class CarPlaybackService : MediaSessionService() {
             it.copy(
                 currentVideo = video,
                 upNextVideos = upNextQueue.toList(),
+                isLoadingUpNext = true,
                 canGoPrevious = playedHistory.isNotEmpty(),
                 sponsorSegments = emptyList(),
                 isLoading = true,
@@ -358,8 +359,13 @@ class CarPlaybackService : MediaSessionService() {
                 PlaybackStateStore.update {
                     it.copy(
                         upNextVideos = upNextQueue.toList(),
+                        isLoadingUpNext = false,
                         sponsorSegments = extras.sponsorSegments
                     )
+                }
+            }.onFailure {
+                if (PlaybackStateStore.state.value.currentVideo?.videoId == video.videoId) {
+                    PlaybackStateStore.update { it.copy(isLoadingUpNext = false) }
                 }
             }
         }

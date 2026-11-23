@@ -1,317 +1,620 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/playerRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#FF000000">
+    android:background="@color/car_bg"
+    android:orientation="horizontal">
 
-    <!-- SurfaceView for Fullscreen Display #0 (lowest CPU/GPU overhead) -->
-    <androidx.media3.ui.PlayerView
-        android:id="@+id/playerViewSurface"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        app:resize_mode="fit"
-        app:surface_type="surface_view"
-        app:use_controller="false" />
-
-    <!-- TextureView for ActivityViewVirtualDisplay / PiP slots (fixes black screen & Z-order on Android 9) -->
-    <androidx.media3.ui.PlayerView
-        android:id="@+id/playerViewTexture"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:visibility="gone"
-        app:resize_mode="fit"
-        app:surface_type="texture_view"
-        app:use_controller="false" />
-
-    <!-- Audio-Only Black Overlay -->
+    <!-- 1. Left / Top Main Video + Watch Dock Column -->
     <LinearLayout
-        android:id="@+id/audioOnlyOverlay"
-        android:layout_width="match_parent"
+        android:id="@+id/leftMainPane"
+        android:layout_width="0dp"
         android:layout_height="match_parent"
-        android:background="@color/car_bg"
-        android:gravity="center"
-        android:orientation="vertical"
-        android:padding="16dp"
-        android:visibility="gone">
+        android:layout_weight="64"
+        android:background="#FF000000"
+        android:orientation="vertical">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="CHẾ ĐỘ CHỈ PHÁT ÂM THANH"
-            android:textColor="@color/car_accent"
-            android:textSize="18sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:gravity="center"
-            android:text="Đã tắt giải mã hình ảnh để giảm CPU cho đầu xe"
-            android:textColor="@color/car_text_secondary"
-            android:textSize="14sp" />
-    </LinearLayout>
-
-    <!-- Fullscreen Touch Layer (Tap toggle / Double-tap seek ±10s) -->
-    <View
-        android:id="@+id/touchSurface"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
-
-    <!-- SponsorBlock / Quick Seek / Error Notice Pill -->
-    <TextView
-        android:id="@+id/tvStatusNotice"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top|center_horizontal"
-        android:layout_marginTop="64dp"
-        android:background="@drawable/bg_chip"
-        android:paddingHorizontal="14dp"
-        android:paddingVertical="8dp"
-        android:textColor="@color/car_text_primary"
-        android:textSize="14sp"
-        android:textStyle="bold"
-        android:visibility="gone" />
-
-    <ProgressBar
-        android:id="@+id/progressLoading"
-        android:layout_width="52dp"
-        android:layout_height="52dp"
-        android:layout_gravity="center"
-        android:visibility="gone" />
-
-    <!-- Car-Friendly Touch Controls Overlay -->
-    <RelativeLayout
-        android:id="@+id/controlsOverlay"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@color/car_overlay"
-        android:padding="14dp">
-
-        <!-- Top Bar -->
-        <LinearLayout
+        <!-- 1A. Video Stage Frame -->
+        <FrameLayout
+            android:id="@+id/videoStageFrame"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_alignParentTop="true"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:background="#FF000000">
 
-            <ImageButton
-                android:id="@+id/btnBack"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:background="@drawable/bg_player_circle_btn"
-                android:contentDescription="Quay lại"
-                android:src="@drawable/ic_back" />
+            <!-- SurfaceView for Main Car Display #0 (lowest CPU/GPU overhead) -->
+            <androidx.media3.ui.PlayerView
+                android:id="@+id/playerViewSurface"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                app:resize_mode="fit"
+                app:surface_type="surface_view"
+                app:use_controller="false" />
 
+            <!-- TextureView for ActivityViewVirtualDisplay / PiP slots (fixes black screen & Z-order on Android 9) -->
+            <androidx.media3.ui.PlayerView
+                android:id="@+id/playerViewTexture"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone"
+                app:resize_mode="fit"
+                app:surface_type="texture_view"
+                app:use_controller="false" />
+
+            <!-- Audio-Only Black Overlay -->
             <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginHorizontal="10dp"
-                android:layout_weight="1"
-                android:orientation="vertical">
+                android:id="@+id/audioOnlyOverlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@color/car_bg"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:padding="16dp"
+                android:visibility="gone">
 
                 <TextView
-                    android:id="@+id/tvVideoTitle"
-                    android:layout_width="match_parent"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:ellipsize="end"
-                    android:maxLines="1"
-                    android:textColor="@color/car_text_primary"
+                    android:gravity="center"
+                    android:text="CHẾ ĐỘ CHỈ PHÁT ÂM THANH"
+                    android:textColor="@color/car_accent"
                     android:textSize="17sp"
                     android:textStyle="bold" />
 
                 <TextView
-                    android:id="@+id/tvVideoChannel"
-                    android:layout_width="match_parent"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:ellipsize="end"
-                    android:maxLines="1"
+                    android:layout_marginTop="6dp"
+                    android:gravity="center"
+                    android:text="Đã tắt giải mã hình ảnh để giảm CPU cho đầu xe"
                     android:textColor="@color/car_text_secondary"
                     android:textSize="13sp" />
             </LinearLayout>
 
-            <Button
-                android:id="@+id/btnQuality"
+            <!-- Touch Layer (Tap toggle / Double-tap seek ±10s) -->
+            <View
+                android:id="@+id/touchSurface"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <!-- SponsorBlock / Quick Seek / Error Notice Pill -->
+            <TextView
+                android:id="@+id/tvStatusNotice"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
-                android:backgroundTint="@color/car_surface_elevated"
-                android:minWidth="0dp"
-                android:paddingHorizontal="10dp"
-                android:text="1080p"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|center_horizontal"
+                android:layout_marginTop="56dp"
+                android:background="@drawable/bg_chip"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="8dp"
                 android:textColor="@color/car_text_primary"
-                android:textSize="13sp" />
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/progressLoading"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_gravity="center"
+                android:visibility="gone" />
+
+            <!-- Overlay Controls (Used in Frame-Full Mode & Full Car Screen 1920x720 Split Mode) -->
+            <RelativeLayout
+                android:id="@+id/controlsOverlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@color/car_overlay"
+                android:padding="12dp">
+
+                <!-- Top Bar -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_alignParentTop="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <ImageButton
+                        android:id="@+id/btnBack"
+                        android:layout_width="46dp"
+                        android:layout_height="46dp"
+                        android:background="@drawable/bg_player_circle_btn"
+                        android:contentDescription="Quay lại"
+                        android:src="@drawable/ic_back" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginHorizontal="10dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvVideoTitle"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="@color/car_text_primary"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvVideoChannel"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="@color/car_text_secondary"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+
+                    <Button
+                        android:id="@+id/btnQuality"
+                        android:layout_width="wrap_content"
+                        android:layout_height="42dp"
+                        android:backgroundTint="@color/car_surface_elevated"
+                        android:minWidth="0dp"
+                        android:paddingHorizontal="10dp"
+                        android:text="1080p"
+                        android:textColor="@color/car_text_primary"
+                        android:textSize="12sp" />
+
+                    <Button
+                        android:id="@+id/btnAudioOnly"
+                        android:layout_width="wrap_content"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="6dp"
+                        android:backgroundTint="@color/car_surface_elevated"
+                        android:minWidth="0dp"
+                        android:paddingHorizontal="10dp"
+                        android:text="Chỉ tiếng"
+                        android:textColor="@color/car_text_primary"
+                        android:textSize="12sp" />
+
+                    <Button
+                        android:id="@+id/btnZoomMode"
+                        android:layout_width="wrap_content"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="6dp"
+                        android:backgroundTint="@color/car_surface_elevated"
+                        android:minWidth="0dp"
+                        android:paddingHorizontal="10dp"
+                        android:text="Vừa khung"
+                        android:textColor="@color/car_text_primary"
+                        android:textSize="12sp"
+                        android:visibility="gone" />
+
+                    <Button
+                        android:id="@+id/btnPopOutCar"
+                        android:layout_width="wrap_content"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="6dp"
+                        android:backgroundTint="@color/car_surface_elevated"
+                        android:minWidth="0dp"
+                        android:paddingHorizontal="10dp"
+                        android:text="⤢ Toàn xe"
+                        android:textColor="@color/car_text_primary"
+                        android:textSize="12sp"
+                        android:visibility="gone" />
+
+                    <Button
+                        android:id="@+id/btnToggleSplitTop"
+                        android:layout_width="wrap_content"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="6dp"
+                        android:backgroundTint="@color/car_accent"
+                        android:minWidth="0dp"
+                        android:paddingHorizontal="12dp"
+                        android:text="⛶ Full"
+                        android:textColor="@color/car_text_primary"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <!-- Center Car Touch Transport Controls -->
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_centerInParent="true"
+                    android:gravity="center"
+                    android:orientation="horizontal">
+
+                    <ImageButton
+                        android:id="@+id/btnPrev"
+                        android:layout_width="64dp"
+                        android:layout_height="64dp"
+                        android:background="@drawable/bg_player_circle_btn"
+                        android:contentDescription="Video trước"
+                        android:src="@drawable/ic_prev" />
+
+                    <ImageButton
+                        android:id="@+id/btnRewind"
+                        android:layout_width="64dp"
+                        android:layout_height="64dp"
+                        android:layout_marginStart="14dp"
+                        android:background="@drawable/bg_player_circle_btn"
+                        android:contentDescription="Lùi 10 giây"
+                        android:src="@drawable/ic_rewind" />
+
+                    <ImageButton
+                        android:id="@+id/btnPlayPause"
+                        android:layout_width="80dp"
+                        android:layout_height="80dp"
+                        android:layout_marginHorizontal="18dp"
+                        android:background="@drawable/bg_player_circle_btn"
+                        android:contentDescription="Phát hoặc tạm dừng"
+                        android:src="@drawable/ic_pause" />
+
+                    <ImageButton
+                        android:id="@+id/btnForward"
+                        android:layout_width="64dp"
+                        android:layout_height="64dp"
+                        android:layout_marginEnd="14dp"
+                        android:background="@drawable/bg_player_circle_btn"
+                        android:contentDescription="Tua 10 giây"
+                        android:src="@drawable/ic_forward" />
+
+                    <ImageButton
+                        android:id="@+id/btnNext"
+                        android:layout_width="64dp"
+                        android:layout_height="64dp"
+                        android:background="@drawable/bg_player_circle_btn"
+                        android:contentDescription="Video tiếp theo"
+                        android:src="@drawable/ic_next" />
+                </LinearLayout>
+
+                <!-- Bottom SeekBar + Quick Frame-Full Toggle -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_alignParentBottom="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingBottom="2dp">
+
+                    <TextView
+                        android:id="@+id/tvCurrentTime"
+                        android:layout_width="52dp"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:text="0:00"
+                        android:textColor="@color/car_text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <SeekBar
+                        android:id="@+id/seekBar"
+                        android:layout_width="0dp"
+                        android:layout_height="38dp"
+                        android:layout_weight="1"
+                        android:progressTint="@color/car_accent"
+                        android:thumbTint="@color/car_accent" />
+
+                    <TextView
+                        android:id="@+id/tvTotalTime"
+                        android:layout_width="52dp"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:text="0:00"
+                        android:textColor="@color/car_text_secondary"
+                        android:textSize="13sp" />
+
+                    <Button
+                        android:id="@+id/btnToggleSplitBottom"
+                        android:layout_width="wrap_content"
+                        android:layout_height="38dp"
+                        android:layout_marginStart="6dp"
+                        android:backgroundTint="@color/car_surface_elevated"
+                        android:minWidth="0dp"
+                        android:paddingHorizontal="10dp"
+                        android:text="⛶ Full"
+                        android:textColor="@color/car_text_primary"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+            </RelativeLayout>
+        </FrameLayout>
+
+        <!-- 1B. Persistent Below-Video Watch Dock (Used in Split Mode inside PiP 1061x712 & 360x712) -->
+        <LinearLayout
+            android:id="@+id/watchDockPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/car_surface"
+            android:gravity="center_vertical"
+            android:orientation="vertical"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="6dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tvDockTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:textColor="@color/car_text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:id="@+id/dockMetaRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tvDockChannel"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="@color/car_text_secondary"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/btnDockQuality"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:backgroundTint="@color/car_surface_elevated"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="8dp"
+                    android:text="1080p"
+                    android:textColor="@color/car_text_primary"
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/btnDockAudioOnly"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:backgroundTint="@color/car_surface_elevated"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="8dp"
+                    android:text="Chỉ tiếng"
+                    android:textColor="@color/car_text_primary"
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/btnDockPopOutCar"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:backgroundTint="@color/car_surface_elevated"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="8dp"
+                    android:text="⤢ Toàn xe"
+                    android:textColor="@color/car_text_primary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/dockSeekRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tvDockCurrentTime"
+                    android:layout_width="46dp"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:text="0:00"
+                    android:textColor="@color/car_text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <SeekBar
+                    android:id="@+id/dockSeekBar"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:progressTint="@color/car_accent"
+                    android:thumbTint="@color/car_accent" />
+
+                <TextView
+                    android:id="@+id/tvDockTotalTime"
+                    android:layout_width="46dp"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:text="0:00"
+                    android:textColor="@color/car_text_secondary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/dockControlsRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/btnDockBack"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:background="@drawable/bg_player_circle_btn"
+                    android:contentDescription="Quay lại"
+                    android:src="@drawable/ic_back" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="horizontal">
+
+                    <ImageButton
+                        android:id="@+id/btnDockPrev"
+                        android:layout_width="46dp"
+                        android:layout_height="46dp"
+                        android:background="@drawable/bg_player_circle_btn"
+                        android:contentDescription="Video trước"
+                        android:src="@drawable/ic_prev" />
+
+                    <ImageButton
+                        android:id="@+id/btnDockRewind"
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/bg_player_circle_btn"
+                        android:contentDescription="Lùi 10 giây"
+                        android:src="@drawable/ic_rewind" />
+
+                    <ImageButton
+                        android:id="@+id/btnDockPlayPause"
+                        android:layout_width="54dp"
+                        android:layout_height="54dp"
+                        android:layout_marginHorizontal="10dp"
+                        android:background="@drawable/bg_player_circle_btn"
+                        android:contentDescription="Phát hoặc tạm dừng"
+                        android:src="@drawable/ic_pause" />
+
+                    <ImageButton
+                        android:id="@+id/btnDockForward"
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:layout_marginEnd="8dp"
+                        android:background="@drawable/bg_player_circle_btn"
+                        android:contentDescription="Tua 10 giây"
+                        android:src="@drawable/ic_forward" />
+
+                    <ImageButton
+                        android:id="@+id/btnDockNext"
+                        android:layout_width="46dp"
+                        android:layout_height="46dp"
+                        android:background="@drawable/bg_player_circle_btn"
+                        android:contentDescription="Video tiếp theo"
+                        android:src="@drawable/ic_next" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/btnDockFullFrame"
+                    android:layout_width="wrap_content"
+                    android:layout_height="42dp"
+                    android:backgroundTint="@color/car_accent"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="12dp"
+                    android:text="⛶ Full"
+                    android:textColor="@color/car_text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Thin Divider between Video Pane and Up Next Sidebar -->
+    <View
+        android:id="@+id/upNextDivider"
+        android:layout_width="1dp"
+        android:layout_height="match_parent"
+        android:background="@color/car_divider" />
+
+    <!-- 2. Right / Bottom Dedicated "Tiếp theo" Suggested Videos Panel -->
+    <LinearLayout
+        android:id="@+id/upNextPanel"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="36"
+        android:background="@color/car_bg"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="@color/car_surface"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp">
+
+            <TextView
+                android:id="@+id/tvUpNextHeader"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="Tiếp theo"
+                android:textColor="@color/car_text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold" />
 
             <Button
-                android:id="@+id/btnAudioOnly"
+                android:id="@+id/btnSidebarPopOutCar"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
-                android:layout_marginStart="6dp"
+                android:layout_height="36dp"
+                android:layout_marginEnd="6dp"
                 android:backgroundTint="@color/car_surface_elevated"
                 android:minWidth="0dp"
-                android:paddingHorizontal="10dp"
-                android:text="Chỉ tiếng"
+                android:paddingHorizontal="8dp"
+                android:text="⤢ Toàn xe"
                 android:textColor="@color/car_text_primary"
-                android:textSize="13sp" />
-
-            <Button
-                android:id="@+id/btnFullscreen"
-                android:layout_width="wrap_content"
-                android:layout_height="44dp"
-                android:layout_marginStart="6dp"
-                android:backgroundTint="@color/car_surface_elevated"
-                android:minWidth="0dp"
-                android:paddingHorizontal="10dp"
-                android:text="Full"
-                android:textColor="@color/car_text_primary"
-                android:textSize="13sp"
+                android:textSize="12sp"
                 android:visibility="gone" />
 
             <Button
-                android:id="@+id/btnUpNext"
+                android:id="@+id/btnSidebarFullFrame"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
-                android:layout_marginStart="6dp"
+                android:layout_height="38dp"
                 android:backgroundTint="@color/car_accent"
                 android:minWidth="0dp"
-                android:paddingHorizontal="10dp"
-                android:text="Tiếp"
+                android:paddingHorizontal="12dp"
+                android:text="⛶ Full"
                 android:textColor="@color/car_text_primary"
-                android:textSize="13sp" />
+                android:textSize="12sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
-        <!-- Center Car Touch Transport Controls (auto-scaled per display mode) -->
         <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_centerInParent="true"
-            android:gravity="center"
-            android:orientation="horizontal">
-
-            <ImageButton
-                android:id="@+id/btnPrev"
-                android:layout_width="64dp"
-                android:layout_height="64dp"
-                android:background="@drawable/bg_player_circle_btn"
-                android:contentDescription="Video trước"
-                android:src="@drawable/ic_prev" />
-
-            <ImageButton
-                android:id="@+id/btnRewind"
-                android:layout_width="64dp"
-                android:layout_height="64dp"
-                android:layout_marginStart="14dp"
-                android:background="@drawable/bg_player_circle_btn"
-                android:contentDescription="Lùi 10 giây"
-                android:src="@drawable/ic_rewind" />
-
-            <ImageButton
-                android:id="@+id/btnPlayPause"
-                android:layout_width="80dp"
-                android:layout_height="80dp"
-                android:layout_marginHorizontal="18dp"
-                android:background="@drawable/bg_player_circle_btn"
-                android:contentDescription="Phát hoặc tạm dừng"
-                android:src="@drawable/ic_pause" />
-
-            <ImageButton
-                android:id="@+id/btnForward"
-                android:layout_width="64dp"
-                android:layout_height="64dp"
-                android:layout_marginEnd="14dp"
-                android:background="@drawable/bg_player_circle_btn"
-                android:contentDescription="Tua 10 giây"
-                android:src="@drawable/ic_forward" />
-
-            <ImageButton
-                android:id="@+id/btnNext"
-                android:layout_width="64dp"
-                android:layout_height="64dp"
-                android:background="@drawable/bg_player_circle_btn"
-                android:contentDescription="Video tiếp theo"
-                android:src="@drawable/ic_next" />
-        </LinearLayout>
-
-        <!-- Bottom SeekBar -->
-        <LinearLayout
+            android:id="@+id/upNextLoadingRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_alignParentBottom="true"
-            android:gravity="center_vertical"
+            android:gravity="center"
             android:orientation="horizontal"
-            android:paddingBottom="4dp">
+            android:padding="12dp"
+            android:visibility="gone">
+
+            <ProgressBar
+                android:layout_width="22dp"
+                android:layout_height="22dp" />
 
             <TextView
-                android:id="@+id/tvCurrentTime"
-                android:layout_width="54dp"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:gravity="center"
-                android:text="0:00"
-                android:textColor="@color/car_text_primary"
-                android:textSize="13sp"
-                android:textStyle="bold" />
-
-            <SeekBar
-                android:id="@+id/seekBar"
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:layout_weight="1"
-                android:progressTint="@color/car_accent"
-                android:thumbTint="@color/car_accent" />
-
-            <TextView
-                android:id="@+id/tvTotalTime"
-                android:layout_width="54dp"
-                android:layout_height="wrap_content"
-                android:gravity="center"
-                android:text="0:00"
+                android:layout_marginStart="8dp"
+                android:text="Đang tải video đề xuất..."
                 android:textColor="@color/car_text_secondary"
                 android:textSize="13sp" />
         </LinearLayout>
-    </RelativeLayout>
 
-    <!-- Slide-in Up Next Drawer -->
-    <LinearLayout
-        android:id="@+id/upNextPanel"
-        android:layout_width="340dp"
-        android:layout_height="match_parent"
-        android:layout_gravity="end"
-        android:background="@color/car_surface"
-        android:orientation="vertical"
-        android:padding="12dp"
-        android:visibility="gone">
-
-        <LinearLayout
+        <TextView
+            android:id="@+id/tvUpNextEmpty"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingBottom="8dp">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Danh sách tiếp theo"
-                android:textColor="@color/car_text_primary"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <Button
-                android:id="@+id/btnCloseUpNext"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
-                android:backgroundTint="@color/car_surface_elevated"
-                android:text="✕"
-                android:textColor="@color/car_text_primary" />
-        </LinearLayout>
+            android:gravity="center"
+            android:padding="18dp"
+            android:text="Chưa có video đề xuất"
+            android:textColor="@color/car_text_secondary"
+            android:textSize="13sp"
+            android:visibility="gone" />
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/rvUpNext"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1" />
+            android:layout_weight="1"
+            android:clipToPadding="false"
+            android:paddingVertical="4dp" />
     </LinearLayout>
-</FrameLayout>
+</LinearLayout>
