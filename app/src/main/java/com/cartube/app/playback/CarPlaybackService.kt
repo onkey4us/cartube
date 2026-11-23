@@ -32,6 +32,7 @@ import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.cartube.app.data.CarPrefs
+import com.cartube.app.data.ClientSourceHelper
 import com.cartube.app.data.VideoItem
 import com.cartube.app.data.YouTubeRepository
 import com.cartube.app.ui.PlayerActivity
@@ -133,11 +134,14 @@ class CarPlaybackService : MediaSessionService() {
                 if (videoSize.height > 0) {
                     Log.i(TAG, "Active video resolution: ${videoSize.width}x${videoSize.height}")
                     PlaybackStateStore.update { it.copy(actualVideoHeight = videoSize.height) }
+                    rememberWorkingClient()
                 }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED) {
+                if (playbackState == Player.STATE_READY) {
+                    rememberWorkingClient()
+                } else if (playbackState == Player.STATE_ENDED) {
                     playNext()
                 }
             }
@@ -355,6 +359,14 @@ class CarPlaybackService : MediaSessionService() {
     fun updateMaxVideoHeight(maxHeight: Int) {
         prefs.maxVideoHeight = maxHeight
         applyTrackPreferences()
+    }
+
+    private fun rememberWorkingClient() {
+        val currentKey = ClientSourceHelper.getCurrentClientKey() ?: return
+        if (prefs.preferredClientName != currentKey) {
+            prefs.preferredClientName = currentKey
+            Log.i(TAG, "Remembered working playback source: $currentKey")
+        }
     }
 
     private fun applyTrackPreferences() {

@@ -120,6 +120,37 @@
                 android:textSize="16sp" />
         </LinearLayout>
 
+        <!-- Remembered Playback Source Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_card"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="18dp">
+
+            <TextView
+                android:id="@+id/tvRememberedSource"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Nguồn phát đang nhớ: Tự động"
+                android:textColor="@color/car_text_primary"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnResetSource"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:backgroundTint="@color/car_surface_elevated"
+                android:paddingHorizontal="18dp"
+                android:text="Đặt lại nguồn phát"
+                android:textColor="@color/car_text_primary"
+                android:textSize="14sp" />
+        </LinearLayout>
+
         <TextView
             android:id="@+id/tvAppInfo"
             android:layout_width="match_parent"
