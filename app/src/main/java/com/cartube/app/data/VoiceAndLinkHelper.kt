@@ -219,8 +219,9 @@ object VoiceAndLinkHelper {
             subtitle = "",
             thumbnailUrl = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg",
             durationMs = 0L,
+            badgeText = "",
             isLive = false,
-            badgeText = ""
+            clickTrackingParams = null
         )
     }
 
