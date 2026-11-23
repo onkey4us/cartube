@@ -15,6 +15,7 @@ data class PlaybackUiState(
     val isLoading: Boolean = false,
     val isPlaying: Boolean = false,
     val isAudioOnly: Boolean = false,
+    val actualVideoHeight: Int = 0,
     val statusNotice: String? = null,
     val errorMessage: String? = null
 )

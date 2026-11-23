@@ -44,6 +44,12 @@ jobs:
         with:
           gradle-version: '7.6.4'
 
+      - name: Cache Android Debug Keystore (Keep Consistent Signature)
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: cartube-debug-keystore-v1
+
       - name: Ensure Android Debug Keystore Exists
         run: |
           mkdir -p "$HOME/.android"

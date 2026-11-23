@@ -14,6 +14,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -25,6 +26,7 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.cartube.app.data.CarPrefs
@@ -84,9 +86,14 @@ class CarPlaybackService : MediaSessionService() {
         trackSelector = DefaultTrackSelector(this).apply {
             parameters = buildUponParameters()
                 .setMaxVideoSize(1920, prefs.maxVideoHeight)
-                .setForceHighestSupportedBitrate(false)
+                .setForceHighestSupportedBitrate(true)
                 .build()
         }
+
+        // Start bandwidth estimate at 12 Mbps so ExoPlayer picks sharp 1080p/720p immediately instead of blurry 240p/360p
+        val bandwidthMeter = DefaultBandwidthMeter.Builder(this)
+            .setInitialBitrateEstimate(12_000_000L)
+            .build()
 
         // Lean buffer tuned for car head units (fast start, low RAM usage)
         val loadControl = DefaultLoadControl.Builder()
@@ -105,6 +112,7 @@ class CarPlaybackService : MediaSessionService() {
 
         exoPlayer = ExoPlayer.Builder(this)
             .setTrackSelector(trackSelector)
+            .setBandwidthMeter(bandwidthMeter)
             .setLoadControl(loadControl)
             .setAudioAttributes(audioAttributes, true) // Auto handle car AudioFocus (navi/reverse)
             .setHandleAudioBecomingNoisy(true)
@@ -113,6 +121,13 @@ class CarPlaybackService : MediaSessionService() {
         exoPlayer.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 PlaybackStateStore.update { it.copy(isPlaying = isPlaying) }
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.height > 0) {
+                    Log.i(TAG, "Active video resolution: ${videoSize.width}x${videoSize.height}")
+                    PlaybackStateStore.update { it.copy(actualVideoHeight = videoSize.height) }
+                }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -207,6 +222,7 @@ class CarPlaybackService : MediaSessionService() {
                 currentIndex = idx,
                 sponsorSegments = emptyList(),
                 isLoading = true,
+                actualVideoHeight = 0,
                 errorMessage = null,
                 statusNotice = if (resetRetry) null else it.statusNotice
             )
@@ -318,6 +334,7 @@ class CarPlaybackService : MediaSessionService() {
         val builder = trackSelector.buildUponParameters()
             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, !isVideoTrackEnabled)
             .setMaxVideoSize(maxWidth, maxHeight)
+            .setForceHighestSupportedBitrate(true)
 
         if (prefs.blockAv1) {
             // Prefer hardware-decoded H.264 / VP9 on i.MX8Q instead of software AV1
@@ -335,12 +352,15 @@ class CarPlaybackService : MediaSessionService() {
             TAG,
             "Building MediaSource client=$clientName dash=${formatInfo.containsDashFormats()} " +
                 "sabr=${formatInfo.containsSabrFormats()} hls=${formatInfo.containsHlsUrl()} " +
-                "dashUrl=${formatInfo.containsDashUrl()} urls=${formatInfo.urlFormats?.size ?: 0}"
+                "extHls=${formatInfo.hasExtendedHlsFormats()} dashUrl=${formatInfo.containsDashUrl()} " +
+                "adaptive=${formatInfo.adaptiveFormats?.size ?: 0} urls=${formatInfo.urlFormats?.size ?: 0}"
         )
 
         val headers = HashMap<String, String>()
-        headers["Referer"] = "https://www.youtube.com/"
-        headers["Origin"] = "https://www.youtube.com"
+        if (clientName.startsWith("WEB", ignoreCase = true) || clientName.equals("MWEB", ignoreCase = true)) {
+            headers["Referer"] = "https://www.youtube.com/"
+            headers["Origin"] = "https://www.youtube.com"
+        }
         formatInfo.visitorCookie?.takeIf { it.isNotBlank() }?.let {
             headers["Cookie"] = it
         }
@@ -352,10 +372,23 @@ class CarPlaybackService : MediaSessionService() {
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(15_000)
             .setReadTimeoutMs(15_000)
-            .setDefaultRequestProperties(headers)
+            .apply {
+                if (headers.isNotEmpty()) {
+                    setDefaultRequestProperties(headers)
+                }
+            }
 
-        // 1. Live or HLS stream
-        if (formatInfo.isLive && formatInfo.containsHlsUrl()) {
+        // 1. Prefer HLS first for Live, VISIONOS/IOS, or when SABR is present alongside HLS
+        // (VISIONOS/IOS HLS delivers full sharp 1080p H.264/HEVC without 403!)
+        val preferHls = formatInfo.containsHlsUrl() && (
+            formatInfo.isLive ||
+                formatInfo.hasExtendedHlsFormats() ||
+                formatInfo.containsSabrFormats() ||
+                clientName.equals("IOS", ignoreCase = true) ||
+                clientName.equals("VISIONOS", ignoreCase = true)
+            )
+        if (preferHls) {
+            Log.i(TAG, "Selected HLS stream for client=$clientName")
             val hlsItem = Media3Item.fromUri(formatInfo.hlsManifestUrl)
             return HlsMediaSource.Factory(dataSourceFactory).createMediaSource(hlsItem)
         }
@@ -370,6 +403,7 @@ class CarPlaybackService : MediaSessionService() {
                     Uri.parse("https://manifest.googlevideo.com/"),
                     ByteArrayInputStream(mpdXml.toByteArray(StandardCharsets.UTF_8))
                 )
+                Log.i(TAG, "Selected DASH MPD stream for client=$clientName")
                 DashMediaSource.Factory(dataSourceFactory).createMediaSource(manifest)
             }.onFailure {
                 Log.w(TAG, "MPD parse failed, trying direct adaptive fallback: ${it.message}")
@@ -379,7 +413,10 @@ class CarPlaybackService : MediaSessionService() {
         }
 
         // 3. Direct adaptive streams (MergingMediaSource: best H.264/VP9 video + best audio)
-        buildDirectAdaptiveSource(formatInfo, dataSourceFactory)?.let { return it }
+        buildDirectAdaptiveSource(formatInfo, dataSourceFactory)?.let {
+            Log.i(TAG, "Selected Direct MergingMediaSource for client=$clientName")
+            return it
+        }
 
         // 4. Remote DASH manifest URL
         if (formatInfo.containsDashUrl()) {
@@ -387,7 +424,7 @@ class CarPlaybackService : MediaSessionService() {
             return DashMediaSource.Factory(dataSourceFactory).createMediaSource(dashItem)
         }
 
-        // 5. HLS manifest URL (used by VISIONOS / IOS clients)
+        // 5. HLS manifest fallback
         if (formatInfo.containsHlsUrl()) {
             val hlsItem = Media3Item.fromUri(formatInfo.hlsManifestUrl)
             return HlsMediaSource.Factory(dataSourceFactory).createMediaSource(hlsItem)

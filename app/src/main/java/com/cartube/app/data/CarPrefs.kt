@@ -6,7 +6,7 @@ class CarPrefs(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     var maxVideoHeight: Int
-        get() = prefs.getInt(KEY_MAX_VIDEO_HEIGHT, 720)
+        get() = prefs.getInt(KEY_MAX_VIDEO_HEIGHT, 1080)
         set(value) = prefs.edit().putInt(KEY_MAX_VIDEO_HEIGHT, value).apply()
 
     var blockAv1: Boolean

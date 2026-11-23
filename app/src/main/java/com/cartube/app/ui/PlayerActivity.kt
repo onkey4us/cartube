@@ -295,13 +295,19 @@ class PlayerActivity : AppCompatActivity() {
                     binding.tvStatusNotice.visibility = View.GONE
                 }
 
+                updateQualityChip(state.actualVideoHeight)
                 updateAudioOnlyUi()
             }
         }
     }
 
-    private fun updateQualityChip() {
-        binding.btnQuality.text = "${prefs.maxVideoHeight}p"
+    private fun updateQualityChip(actualHeight: Int = PlaybackStateStore.state.value.actualVideoHeight) {
+        val maxH = prefs.maxVideoHeight
+        binding.btnQuality.text = if (actualHeight > 0) {
+            "${actualHeight}p (Max ${maxH}p)"
+        } else {
+            "Max ${maxH}p"
+        }
     }
 
     private fun updateAudioOnlyUi() {
