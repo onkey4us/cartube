@@ -1,9 +1,12 @@
 package com.cartube.app.ui
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
+import android.speech.RecognizerIntent
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
@@ -24,6 +27,8 @@ import com.bumptech.glide.Glide
 import com.cartube.app.R
 import com.cartube.app.data.FeedPage
 import com.cartube.app.data.VideoItem
+import com.cartube.app.data.VoiceAndLinkHelper
+import com.cartube.app.data.VoiceOrLinkTarget
 import com.cartube.app.data.YouTubeRepository
 import com.cartube.app.databinding.ActivityMainBinding
 import com.cartube.app.playback.CarPlaybackService
@@ -92,7 +97,15 @@ class MainActivity : AppCompatActivity() {
         applyResponsiveLayout()
         observePlaybackState()
 
-        selectTab(NavTab.HOME)
+        if (!handleIncomingVoiceOrLinkIntent(intent, isInitialLaunch = true)) {
+            selectTab(NavTab.HOME)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingVoiceOrLinkIntent(intent, isInitialLaunch = false)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -191,6 +204,7 @@ class MainActivity : AppCompatActivity() {
         binding.navSubs.setOnClickListener { selectTab(NavTab.SUBSCRIPTIONS) }
         binding.navHistory.setOnClickListener { selectTab(NavTab.HISTORY) }
         binding.navSearch.setOnClickListener { selectTab(NavTab.SEARCH) }
+        binding.navVoice.setOnClickListener { launchVoiceRecognizer() }
         binding.navAccount.setOnClickListener {
             startActivity(Intent(this, LoginActivity::class.java))
         }
@@ -204,6 +218,7 @@ class MainActivity : AppCompatActivity() {
         binding.compactSubs.setOnClickListener { selectTab(NavTab.SUBSCRIPTIONS) }
         binding.compactHistory.setOnClickListener { selectTab(NavTab.HISTORY) }
         binding.compactSearch.setOnClickListener { selectTab(NavTab.SEARCH) }
+        binding.compactVoice.setOnClickListener { launchVoiceRecognizer() }
         binding.compactAccount.setOnClickListener {
             startActivity(Intent(this, LoginActivity::class.java))
         }
@@ -234,6 +249,9 @@ class MainActivity : AppCompatActivity() {
         }
         binding.btnSearchClear.setOnClickListener {
             binding.etSearch.text?.clear()
+        }
+        binding.btnVoiceSearch.setOnClickListener {
+            launchVoiceRecognizer()
         }
     }
 
@@ -451,7 +469,61 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun performSearch(rawQuery: String) {
+    private fun handleIncomingVoiceOrLinkIntent(incoming: Intent?, isInitialLaunch: Boolean): Boolean {
+        val target = VoiceAndLinkHelper.parseIntent(incoming) ?: return false
+        // Clear intent payload so rotation / config changes never re-trigger the same voice action
+        incoming?.action = null
+        incoming?.data = null
+
+        when (target) {
+            is VoiceOrLinkTarget.Video -> {
+                if (isInitialLaunch) {
+                    selectTab(NavTab.HOME)
+                }
+                openPlayer(VoiceAndLinkHelper.buildPlaceholderVideoItem(target.videoId))
+            }
+            is VoiceOrLinkTarget.SearchAndPlay -> {
+                selectTab(NavTab.SEARCH)
+                binding.etSearch.setText(target.query)
+                Toast.makeText(this, "🎙 Đang mở: ${target.query}", Toast.LENGTH_SHORT).show()
+                performSearch(target.query, autoPlayFirst = true)
+            }
+        }
+        return true
+    }
+
+    @Suppress("DEPRECATION")
+    private fun launchVoiceRecognizer() {
+        try {
+            startActivityForResult(VoiceAndLinkHelper.buildSpeechRecognizerIntent(), REQ_VOICE_SEARCH)
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(
+                this,
+                "Không tìm thấy dịch vụ nhận diện giọng nói Google trên xe",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_VOICE_SEARCH && resultCode == Activity.RESULT_OK) {
+            val raw = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                ?.trim()
+                .orEmpty()
+            if (raw.isNotEmpty()) {
+                val cleaned = VoiceAndLinkHelper.cleanVoiceQuery(raw)
+                selectTab(NavTab.SEARCH)
+                binding.etSearch.setText(cleaned)
+                Toast.makeText(this, "🎙 Đang mở: $cleaned", Toast.LENGTH_SHORT).show()
+                performSearch(cleaned, autoPlayFirst = true)
+            }
+        }
+    }
+
+    private fun performSearch(rawQuery: String, autoPlayFirst: Boolean = false) {
         val query = rawQuery.trim()
         if (query.isEmpty()) {
             Toast.makeText(this, R.string.search_prompt, Toast.LENGTH_SHORT).show()
@@ -469,6 +541,11 @@ class MainActivity : AppCompatActivity() {
             try {
                 val page = YouTubeRepository.search(query)
                 bindFeedPage(page)
+                if (autoPlayFirst) {
+                    page.items.firstOrNull()?.let { firstVideo ->
+                        openPlayer(firstVideo)
+                    }
+                }
             } catch (e: Exception) {
                 showFeedError(e.message ?: getString(R.string.error_load_feed))
             }
@@ -555,5 +632,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    companion object {
+        private const val REQ_VOICE_SEARCH = 2001
     }
 }

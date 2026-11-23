@@ -153,6 +153,18 @@
                     </LinearLayout>
 
                     <Button
+                        android:id="@+id/btnVoice"
+                        android:layout_width="wrap_content"
+                        android:layout_height="42dp"
+                        android:layout_marginEnd="6dp"
+                        android:backgroundTint="@color/car_surface_elevated"
+                        android:minWidth="0dp"
+                        android:paddingHorizontal="10dp"
+                        android:text="🎙 Nói"
+                        android:textColor="@color/car_text_primary"
+                        android:textSize="12sp" />
+
+                    <Button
                         android:id="@+id/btnQuality"
                         android:layout_width="wrap_content"
                         android:layout_height="42dp"
@@ -360,6 +372,18 @@
                     android:textSize="13sp" />
 
                 <Button
+                    android:id="@+id/btnDockVoice"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:backgroundTint="@color/car_surface_elevated"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="8dp"
+                    android:text="🎙 Nói"
+                    android:textColor="@color/car_text_primary"
+                    android:textSize="12sp" />
+
+                <Button
                     android:id="@+id/btnDockQuality"
                     android:layout_width="wrap_content"
                     android:layout_height="36dp"
@@ -549,6 +573,19 @@
                 android:textColor="@color/car_text_primary"
                 android:textSize="15sp"
                 android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnSidebarVoice"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:layout_marginEnd="6dp"
+                android:backgroundTint="@color/car_surface_elevated"
+                android:minWidth="0dp"
+                android:paddingHorizontal="8dp"
+                android:text="🎙"
+                android:textColor="@color/car_text_primary"
+                android:textSize="12sp"
+                android:visibility="gone" />
 
             <Button
                 android:id="@+id/btnSidebarPopOutCar"

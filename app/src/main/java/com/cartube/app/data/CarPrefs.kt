@@ -14,7 +14,7 @@ class CarPrefs(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_BLOCK_AV1, value).apply()
 
     var backgroundAudioOnly: Boolean
-        get() = prefs.getBoolean(KEY_BG_AUDIO_ONLY, true)
+        get() = prefs.getBoolean(KEY_BG_AUDIO_ONLY, false)
         set(value) = prefs.edit().putBoolean(KEY_BG_AUDIO_ONLY, value).apply()
 
     var sponsorBlockEnabled: Boolean

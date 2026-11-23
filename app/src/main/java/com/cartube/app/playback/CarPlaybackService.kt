@@ -34,8 +34,12 @@ import androidx.media3.session.MediaSessionService
 import com.cartube.app.data.CarPrefs
 import com.cartube.app.data.ClientSourceHelper
 import com.cartube.app.data.VideoItem
+import com.cartube.app.data.VoiceAndLinkHelper
+import com.cartube.app.data.VoiceOrLinkTarget
 import com.cartube.app.data.YouTubeRepository
 import com.cartube.app.ui.PlayerActivity
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 import com.liskovsoft.mediaserviceinterfaces.data.MediaFormat
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItemFormatInfo
 import com.liskovsoft.mediaserviceinterfaces.data.SponsorSegment
@@ -192,6 +196,28 @@ class CarPlaybackService : MediaSessionService() {
 
         mediaSession = MediaSession.Builder(this, forwardingPlayer)
             .setSessionActivity(sessionActivityPendingIntent)
+            .setCallback(object : MediaSession.Callback {
+                override fun onAddMediaItems(
+                    mediaSession: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                    mediaItems: MutableList<Media3Item>
+                ): ListenableFuture<MutableList<Media3Item>> {
+                    val first = mediaItems.firstOrNull()
+                    val searchQuery = first?.requestMetadata?.searchQuery
+                    val mediaUri = first?.requestMetadata?.mediaUri
+                    if (!searchQuery.isNullOrBlank()) {
+                        playVoiceSearch(searchQuery)
+                        return Futures.immediateFuture<MutableList<Media3Item>>(ArrayList())
+                    }
+                    if (mediaUri != null) {
+                        VoiceAndLinkHelper.parseUri(mediaUri)?.let { target ->
+                            handleVoiceOrLinkTarget(target)
+                            return Futures.immediateFuture<MutableList<Media3Item>>(ArrayList())
+                        }
+                    }
+                    return super.onAddMediaItems(mediaSession, controller, mediaItems)
+                }
+            })
             .build()
 
         mainHandler.postDelayed(sponsorTickRunnable, SPONSOR_CHECK_INTERVAL_MS)
@@ -236,6 +262,42 @@ class CarPlaybackService : MediaSessionService() {
     fun playFromUpNext(video: VideoItem) {
         upNextQueue.removeAll { it.videoId == video.videoId }
         playVideoInternal(video, pushCurrentToHistory = true, resetRetry = true)
+    }
+
+    fun handleVoiceOrLinkTarget(target: VoiceOrLinkTarget) {
+        when (target) {
+            is VoiceOrLinkTarget.Video -> {
+                playVideo(VoiceAndLinkHelper.buildPlaceholderVideoItem(target.videoId))
+            }
+            is VoiceOrLinkTarget.SearchAndPlay -> {
+                playVoiceSearch(target.query)
+            }
+        }
+    }
+
+    fun playVoiceSearch(rawQuery: String) {
+        val cleaned = VoiceAndLinkHelper.cleanVoiceQuery(rawQuery)
+        PlaybackStateStore.update {
+            it.copy(isLoading = true, statusNotice = "🎙 Đang mở: $cleaned...")
+        }
+        serviceScope.launch {
+            runCatching {
+                YouTubeRepository.search(cleaned)
+            }.onSuccess { page ->
+                val first = page.items.firstOrNull()
+                if (first != null) {
+                    playVideo(first)
+                } else {
+                    PlaybackStateStore.update {
+                        it.copy(isLoading = false, errorMessage = "Không tìm thấy: $cleaned")
+                    }
+                }
+            }.onFailure { err ->
+                PlaybackStateStore.update {
+                    it.copy(isLoading = false, errorMessage = err.message ?: "Lỗi tìm kiếm giọng nói")
+                }
+            }
+        }
     }
 
     private fun recordPlayedSessionId(videoId: String) {

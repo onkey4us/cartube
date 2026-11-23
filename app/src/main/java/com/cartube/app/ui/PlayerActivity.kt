@@ -1,11 +1,14 @@
 package com.cartube.app.ui
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.speech.RecognizerIntent
 import android.util.TypedValue
 import android.view.GestureDetector
 import android.view.KeyEvent
@@ -27,6 +30,8 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.cartube.app.R
 import com.cartube.app.data.CarPrefs
 import com.cartube.app.data.VideoItem
+import com.cartube.app.data.VoiceAndLinkHelper
+import com.cartube.app.data.YouTubeRepository
 import com.cartube.app.databinding.ActivityPlayerBinding
 import com.cartube.app.playback.CarPlaybackService
 import com.cartube.app.playback.PlaybackStateStore
@@ -271,6 +276,7 @@ class PlayerActivity : AppCompatActivity() {
                     0,
                     1f
                 )
+                binding.btnSidebarVoice.visibility = View.VISIBLE
                 binding.btnSidebarPopOutCar.visibility = if (embedded) View.VISIBLE else View.GONE
                 upNextAdapter.setThumbnailWidthDp(112)
             }
@@ -325,6 +331,7 @@ class PlayerActivity : AppCompatActivity() {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     37f
                 )
+                binding.btnSidebarVoice.visibility = View.GONE
                 binding.btnSidebarPopOutCar.visibility = View.GONE
                 upNextAdapter.setThumbnailWidthDp(126)
             }
@@ -360,6 +367,7 @@ class PlayerActivity : AppCompatActivity() {
                     33f
                 )
                 binding.btnPopOutCar.visibility = View.GONE
+                binding.btnSidebarVoice.visibility = View.GONE
                 binding.btnSidebarPopOutCar.visibility = View.GONE
                 upNextAdapter.setThumbnailWidthDp(156)
 
@@ -490,10 +498,57 @@ class PlayerActivity : AppCompatActivity() {
         if (usesOverlayControls) scheduleAutoHide()
     }
 
+    @Suppress("DEPRECATION")
+    private fun launchVoiceSearchInPlayer() {
+        try {
+            startActivityForResult(VoiceAndLinkHelper.buildSpeechRecognizerIntent(), REQ_PLAYER_VOICE)
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(
+                this,
+                "Không tìm thấy dịch vụ nhận diện giọng nói Google trên xe",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_PLAYER_VOICE && resultCode == Activity.RESULT_OK) {
+            val raw = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                ?.trim()
+                .orEmpty()
+            if (raw.isNotEmpty()) {
+                val cleaned = VoiceAndLinkHelper.cleanVoiceQuery(raw)
+                showQuickSeekHint("🎙 Đang mở: $cleaned...")
+                lifecycleScope.launch {
+                    runCatching {
+                        YouTubeRepository.search(cleaned)
+                    }.onSuccess { page ->
+                        val first = page.items.firstOrNull()
+                        if (first != null) {
+                            CarPlaybackService.instance?.playVideo(first)
+                        } else {
+                            showQuickSeekHint("Không tìm thấy: $cleaned")
+                        }
+                    }.onFailure {
+                        showQuickSeekHint("Không tìm được bài hát, thử lại nhé")
+                    }
+                }
+            }
+        }
+    }
+
     private fun setupControls() {
         // Back to video browse list
         binding.btnBack.setOnClickListener { finish() }
         binding.btnDockBack.setOnClickListener { finish() }
+
+        // Voice search right inside Player
+        binding.btnVoice.setOnClickListener { launchVoiceSearchInPlayer() }
+        binding.btnDockVoice.setOnClickListener { launchVoiceSearchInPlayer() }
+        binding.btnSidebarVoice.setOnClickListener { launchVoiceSearchInPlayer() }
 
         // Separate "⤢ Toàn xe" button: pops CarTube out of PiP slot onto 1920x720 Display #0
         binding.btnPopOutCar.setOnClickListener { popOutToMainCarDisplay() }
@@ -814,5 +869,6 @@ class PlayerActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_VIDEO = "extra_video"
+        private const val REQ_PLAYER_VOICE = 2002
     }
 }
