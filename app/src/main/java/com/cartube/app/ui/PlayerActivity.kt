@@ -45,7 +45,6 @@ class PlayerActivity : AppCompatActivity() {
     private var isSeeking: Boolean = false
     private var isControlsVisible: Boolean = true
     private var pendingVideo: VideoItem? = null
-    private var pendingQueue: List<VideoItem> = emptyList()
 
     private val uiHandler = Handler(Looper.getMainLooper())
     private val hideControlsRunnable = Runnable { setControlsVisible(false) }
@@ -240,12 +239,8 @@ class PlayerActivity : AppCompatActivity() {
     @Suppress("DEPRECATION")
     private fun extractIntentExtras(intent: Intent?) {
         val video = intent?.getSerializableExtra(EXTRA_VIDEO) as? VideoItem
-        val queue = (intent?.getSerializableExtra(EXTRA_QUEUE) as? ArrayList<*>)
-            ?.filterIsInstance<VideoItem>()
-            .orEmpty()
         if (video != null) {
             pendingVideo = video
-            pendingQueue = queue
         }
     }
 
@@ -269,9 +264,7 @@ class PlayerActivity : AppCompatActivity() {
         val video = pendingVideo ?: return
         val service = CarPlaybackService.instance ?: return
         pendingVideo = null
-        val queue = pendingQueue
-        pendingQueue = emptyList()
-        service.playVideo(video, queue)
+        service.playVideo(video)
     }
 
     private fun setupControls() {
@@ -368,8 +361,7 @@ class PlayerActivity : AppCompatActivity() {
     private fun setupUpNextList() {
         upNextAdapter = VideoAdapter(compact = true) { item, _ ->
             binding.upNextPanel.visibility = View.GONE
-            val currentQueue = PlaybackStateStore.state.value.queue
-            CarPlaybackService.instance?.playVideo(item, currentQueue)
+            CarPlaybackService.instance?.playFromUpNext(item)
         }
         binding.rvUpNext.layoutManager = LinearLayoutManager(this)
         binding.rvUpNext.adapter = upNextAdapter
@@ -422,12 +414,7 @@ class PlayerActivity : AppCompatActivity() {
                     if (state.isPlaying) R.drawable.ic_pause else R.drawable.ic_play
                 )
 
-                val upNext = if (state.currentIndex >= 0 && state.currentIndex + 1 < state.queue.size) {
-                    state.queue.subList(state.currentIndex + 1, state.queue.size)
-                } else {
-                    state.relatedVideos
-                }
-                upNextAdapter.submitList(upNext)
+                upNextAdapter.submitList(state.upNextVideos)
 
                 if (!state.statusNotice.isNullOrBlank()) {
                     binding.tvStatusNotice.text = state.statusNotice
@@ -551,6 +538,5 @@ class PlayerActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_VIDEO = "extra_video"
-        const val EXTRA_QUEUE = "extra_queue"
     }
 }

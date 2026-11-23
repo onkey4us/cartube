@@ -327,6 +327,22 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- Category / Genre Filter Chips Bar (Home & Music) -->
+        <HorizontalScrollView
+            android:id="@+id/categoryChipScroll"
+            android:layout_width="match_parent"
+            android:layout_height="46dp"
+            android:paddingHorizontal="10dp"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/categoryChipGroup"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
+
         <!-- Feed Grid Area -->
         <FrameLayout
             android:layout_width="match_parent"

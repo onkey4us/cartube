@@ -54,9 +54,27 @@ object YouTubeRepository {
         flattenGroups(groups)
     }
 
+    suspend fun loadTrending(): FeedPage = withContext(Dispatchers.IO) {
+        val groups = serviceManager.contentService.trendingObserve.blockingFirstOrNull().orEmpty()
+        val page = flattenGroups(groups)
+        if (page.items.isNotEmpty()) page else search("Video thịnh hành Việt Nam mới nhất")
+    }
+
     suspend fun loadMusic(): FeedPage = withContext(Dispatchers.IO) {
         val groups = serviceManager.contentService.musicObserve.blockingFirstOrNull().orEmpty()
         flattenGroups(groups)
+    }
+
+    suspend fun loadNews(): FeedPage = withContext(Dispatchers.IO) {
+        val groups = serviceManager.contentService.newsObserve.blockingFirstOrNull().orEmpty()
+        val page = flattenGroups(groups)
+        if (page.items.isNotEmpty()) page else search("Tin tức thời sự mới nhất hôm nay")
+    }
+
+    suspend fun loadLive(): FeedPage = withContext(Dispatchers.IO) {
+        val groups = serviceManager.contentService.liveObserve.blockingFirstOrNull().orEmpty()
+        val page = flattenGroups(groups)
+        if (page.items.isNotEmpty()) page else search("Trực tiếp âm nhạc tin tức Việt Nam")
     }
 
     suspend fun loadSubscriptions(): FeedPage = withContext(Dispatchers.IO) {
@@ -102,7 +120,7 @@ object YouTubeRepository {
                 }.getOrDefault(emptyList())
             }
             val metadata = metaDeferred.await()
-            val related = buildRelatedList(metadata)
+            val related = buildRelatedList(metadata, currentVideoId = videoId)
             val segments = sponsorDeferred.await()
             PlaybackExtras(
                 metadata = metadata,
@@ -118,7 +136,6 @@ object YouTubeRepository {
     ): MediaItemFormatInfo? {
         var lastInfo: MediaItemFormatInfo? = null
         // Cycle through InnerTube clients until we get a Media3-playable format (DASH / HLS / Progressive).
-        // Note: AppClient.TV (first client) often returns SABR-only formats which standard ExoPlayer cannot play.
         repeat(10) { attempt ->
             val info = runCatching {
                 serviceManager.mediaItemService.getFormatInfo(videoId, clickTrackingParams)
@@ -198,25 +215,26 @@ object YouTubeRepository {
         val items = ArrayList<VideoItem>()
         var continuableGroup: MediaGroup? = null
         for (group in groups) {
+            if (group.type == MediaGroup.TYPE_SHORTS) continue
             if (continuableGroup == null && !group.nextPageKey.isNullOrBlank()) {
                 continuableGroup = group
             }
             for (raw in group.mediaItems.orEmpty()) {
-                val video = VideoItem.from(raw) ?: continue
+                val video = VideoItem.from(raw, allowShorts = false) ?: continue
                 if (seen.add(video.videoId)) {
                     items.add(video)
                 }
             }
         }
-        return FeedPage(items, continuableGroup ?: groups.firstOrNull())
+        return FeedPage(items, continuableGroup ?: groups.firstOrNull { it.type != MediaGroup.TYPE_SHORTS })
     }
 
     private fun extractItems(group: MediaGroup?): List<VideoItem> {
-        if (group == null) return emptyList()
+        if (group == null || group.type == MediaGroup.TYPE_SHORTS) return emptyList()
         val seen = HashSet<String>()
         val result = ArrayList<VideoItem>()
         for (raw in group.mediaItems.orEmpty()) {
-            val video = VideoItem.from(raw) ?: continue
+            val video = VideoItem.from(raw, allowShorts = false) ?: continue
             if (seen.add(video.videoId)) {
                 result.add(video)
             }
@@ -224,16 +242,18 @@ object YouTubeRepository {
         return result
     }
 
-    private fun buildRelatedList(metadata: MediaItemMetadata?): List<VideoItem> {
+    private fun buildRelatedList(metadata: MediaItemMetadata?, currentVideoId: String): List<VideoItem> {
         if (metadata == null) return emptyList()
         val seen = HashSet<String>()
+        seen.add(currentVideoId)
         val list = ArrayList<VideoItem>()
-        metadata.nextVideo?.let { VideoItem.from(it) }?.let {
+        metadata.nextVideo?.let { VideoItem.from(it, allowShorts = false) }?.let {
             if (seen.add(it.videoId)) list.add(it)
         }
         for (group in metadata.suggestions.orEmpty()) {
+            if (group.type == MediaGroup.TYPE_SHORTS) continue
             for (raw in group.mediaItems.orEmpty()) {
-                val video = VideoItem.from(raw) ?: continue
+                val video = VideoItem.from(raw, allowShorts = false) ?: continue
                 if (seen.add(video.videoId)) {
                     list.add(video)
                 }

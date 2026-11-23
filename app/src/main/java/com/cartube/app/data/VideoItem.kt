@@ -15,12 +15,19 @@ data class VideoItem(
     val clickTrackingParams: String?
 ) : Serializable {
     companion object {
-        fun from(item: MediaItem): VideoItem? {
+        fun from(item: MediaItem, allowShorts: Boolean = false): VideoItem? {
             val id = item.videoId?.takeIf { it.isNotBlank() } ?: return null
+            val rawTitle = item.title?.takeIf { it.isNotBlank() } ?: "Video"
+            if (!allowShorts) {
+                if (item.isShorts) return null
+                if (rawTitle.contains("#shorts", ignoreCase = true) && item.durationMs in 1..65_000L) {
+                    return null
+                }
+            }
             val second = item.secondTitle?.toString().orEmpty()
             return VideoItem(
                 videoId = id,
-                title = item.title?.takeIf { it.isNotBlank() } ?: "Video",
+                title = rawTitle,
                 author = item.author?.takeIf { it.isNotBlank() } ?: second.substringBefore("•").trim(),
                 subtitle = second,
                 thumbnailUrl = item.cardImageUrl ?: item.backgroundImageUrl ?: "https://i.ytimg.com/vi/$id/hqdefault.jpg",

@@ -5,10 +5,13 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import android.util.TypedValue
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -36,17 +39,46 @@ class MainActivity : AppCompatActivity() {
 
     private enum class NavTab { HOME, MUSIC, SUBSCRIPTIONS, HISTORY, SEARCH }
 
+    private data class CategoryChip(
+        val id: String,
+        val label: String,
+        val loader: suspend () -> FeedPage
+    )
+
     private lateinit var binding: ActivityMainBinding
     private lateinit var videoAdapter: VideoAdapter
     private lateinit var gridLayoutManager: GridLayoutManager
 
     private var currentTab: NavTab = NavTab.HOME
+    private var selectedChipId: String = "home_recommended"
     private var currentGroup: MediaGroup? = null
     private var feedJob: Job? = null
     private var isLoadingMore: Boolean = false
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var mediaController: MediaController? = null
+
+    private val homeChips = listOf(
+        CategoryChip("home_recommended", "Đề xuất") { YouTubeRepository.loadHome() },
+        CategoryChip("home_trending", "Thịnh hành") { YouTubeRepository.loadTrending() },
+        CategoryChip("home_vpop", "Nhạc trẻ") { YouTubeRepository.search("Nhạc trẻ V-Pop tuyển chọn mới nhất") },
+        CategoryChip("home_bolero", "Bolero") { YouTubeRepository.search("Nhạc vàng Bolero trữ tình chọn lọc") },
+        CategoryChip("home_remix", "Remix / Nonstop") { YouTubeRepository.search("Nhạc trẻ Remix Nonstop đi xe hơi") },
+        CategoryChip("home_chill", "Acoustic / Chill") { YouTubeRepository.search("Nhạc Acoustic Lofi chill nhẹ nhàng") },
+        CategoryChip("home_podcast", "Podcast") { YouTubeRepository.search("Podcast tiếng Việt hay nhất") },
+        CategoryChip("home_news", "Tin tức") { YouTubeRepository.loadNews() },
+        CategoryChip("home_live", "Trực tiếp") { YouTubeRepository.loadLive() }
+    )
+
+    private val musicChips = listOf(
+        CategoryChip("music_all", "Tất cả nhạc") { YouTubeRepository.loadMusic() },
+        CategoryChip("music_vpop", "Nhạc trẻ / V-Pop") { YouTubeRepository.search("Nhạc trẻ V-Pop hay nhất hiện nay") },
+        CategoryChip("music_bolero", "Bolero / Trữ tình") { YouTubeRepository.search("Liên khúc Bolero trữ tình hay nhất") },
+        CategoryChip("music_remix", "Remix / Nonstop") { YouTubeRepository.search("Nhạc Remix Nonstop bass căng đi xe") },
+        CategoryChip("music_chill", "Acoustic / Lofi") { YouTubeRepository.search("Acoustic Lofi thư giãn lái xe") },
+        CategoryChip("music_usuk", "Âu Mỹ / US-UK") { YouTubeRepository.search("US UK Pop Hits playlist") },
+        CategoryChip("music_inst", "Không lời") { YouTubeRepository.search("Nhạc không lời thư giãn nhẹ nhàng") }
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -140,7 +172,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupRecyclerView() {
         videoAdapter = VideoAdapter { item, _ ->
-            openPlayer(item, videoAdapter.getCurrentItems())
+            openPlayer(item)
         }
         gridLayoutManager = GridLayoutManager(this, 3)
         binding.rvVideos.layoutManager = gridLayoutManager
@@ -258,8 +290,78 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun renderCategoryChipsForTab(tab: NavTab) {
+        val chips = when (tab) {
+            NavTab.HOME -> homeChips
+            NavTab.MUSIC -> musicChips
+            else -> emptyList()
+        }
+        if (chips.isEmpty()) {
+            binding.categoryChipScroll.visibility = View.GONE
+            binding.categoryChipGroup.removeAllViews()
+            return
+        }
+
+        if (chips.none { it.id == selectedChipId }) {
+            selectedChipId = chips.first().id
+        }
+
+        binding.categoryChipScroll.visibility = View.VISIBLE
+        binding.categoryChipGroup.removeAllViews()
+
+        val heightPx = dpToPx(38)
+        val padH = dpToPx(14)
+        val marginEnd = dpToPx(8)
+        val textColor = ContextCompat.getColor(this, R.color.car_text_primary)
+
+        for (chip in chips) {
+            val tv = TextView(this).apply {
+                text = chip.label
+                textSize = 14f
+                setTextColor(textColor)
+                gravity = Gravity.CENTER
+                setBackgroundResource(R.drawable.bg_nav_item)
+                setPadding(padH, 0, padH, 0)
+                isSelected = chip.id == selectedChipId
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    heightPx
+                ).apply {
+                    this.marginEnd = marginEnd
+                }
+                setOnClickListener {
+                    if (selectedChipId != chip.id) {
+                        selectedChipId = chip.id
+                        updateChipSelectionVisuals(chips)
+                        loadCurrentTab()
+                    }
+                }
+            }
+            binding.categoryChipGroup.addView(tv)
+        }
+        binding.categoryChipScroll.scrollTo(0, 0)
+    }
+
+    private fun updateChipSelectionVisuals(chips: List<CategoryChip>) {
+        val count = binding.categoryChipGroup.childCount
+        for (i in 0 until count) {
+            val view = binding.categoryChipGroup.getChildAt(i)
+            val chip = chips.getOrNull(i) ?: continue
+            view.isSelected = chip.id == selectedChipId
+        }
+    }
+
     private fun selectTab(tab: NavTab) {
+        val tabChanged = currentTab != tab
         currentTab = tab
+        if (tabChanged) {
+            selectedChipId = when (tab) {
+                NavTab.HOME -> homeChips.first().id
+                NavTab.MUSIC -> musicChips.first().id
+                else -> ""
+            }
+        }
+
         val railMap = mapOf(
             NavTab.HOME to binding.navHome,
             NavTab.MUSIC to binding.navMusic,
@@ -277,6 +379,8 @@ class MainActivity : AppCompatActivity() {
             NavTab.SEARCH to binding.compactSearch
         )
         compactMap.forEach { (key, view) -> view.isSelected = key == tab }
+
+        renderCategoryChipsForTab(tab)
 
         binding.searchBarContainer.visibility = if (tab == NavTab.SEARCH) View.VISIBLE else View.GONE
         if (DisplayModeHelper.getLayoutMode(this) == DisplayModeHelper.LayoutMode.PIP_COMPACT) {
@@ -327,8 +431,14 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 val page: FeedPage = when (currentTab) {
-                    NavTab.HOME -> YouTubeRepository.loadHome()
-                    NavTab.MUSIC -> YouTubeRepository.loadMusic()
+                    NavTab.HOME -> {
+                        val chip = homeChips.firstOrNull { it.id == selectedChipId } ?: homeChips.first()
+                        chip.loader()
+                    }
+                    NavTab.MUSIC -> {
+                        val chip = musicChips.firstOrNull { it.id == selectedChipId } ?: musicChips.first()
+                        chip.loader()
+                    }
                     NavTab.SUBSCRIPTIONS -> YouTubeRepository.loadSubscriptions()
                     NavTab.HISTORY -> YouTubeRepository.loadHistory()
                     NavTab.SEARCH -> return@launch
@@ -412,10 +522,9 @@ class MainActivity : AppCompatActivity() {
         binding.tvError.text = msg
     }
 
-    private fun openPlayer(video: VideoItem, queue: List<VideoItem>) {
+    private fun openPlayer(video: VideoItem) {
         val intent = Intent(this, PlayerActivity::class.java).apply {
             putExtra(PlayerActivity.EXTRA_VIDEO, video)
-            putExtra(PlayerActivity.EXTRA_QUEUE, ArrayList(queue.take(40)))
         }
         startActivity(intent)
     }

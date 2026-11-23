@@ -65,7 +65,13 @@ class CarPlaybackService : MediaSessionService() {
     private val cronetExecutor = Executors.newCachedThreadPool()
     private var loadJob: Job? = null
     private var extrasJob: Job? = null
+    private var nextActionJob: Job? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    // Smart related-only Up Next queue + Played History stack (prevents jumping across unrelated Home categories)
+    private val playedHistory = ArrayDeque<VideoItem>()
+    private val playedIdsInSession = LinkedHashSet<String>()
+    private val upNextQueue = ArrayList<VideoItem>()
 
     private var activeSegments: List<SponsorSegment> = emptyList()
     private val skippedSegmentKeys = HashSet<String>()
@@ -149,7 +155,6 @@ class CarPlaybackService : MediaSessionService() {
             override fun onPlayerError(error: PlaybackException) {
                 Log.e(TAG, "ExoPlayer error (${error.errorCodeName}): ${error.message}", error)
                 val current = PlaybackStateStore.state.value.currentVideo
-                val currentQueue = PlaybackStateStore.state.value.queue
                 if (current != null && errorRetryCount < MAX_ERROR_RETRIES) {
                     errorRetryCount++
                     Log.w(TAG, "Auto-switching YouTube client & retrying ($errorRetryCount/$MAX_ERROR_RETRIES)...")
@@ -161,7 +166,7 @@ class CarPlaybackService : MediaSessionService() {
                         )
                     }
                     YouTubeServiceManager.instance().switchNextClientNow()
-                    playVideoInternal(current, currentQueue, resetRetry = false)
+                    playVideoInternal(current, pushCurrentToHistory = false, resetRetry = false)
                 } else {
                     PlaybackStateStore.update {
                         it.copy(
@@ -200,6 +205,7 @@ class CarPlaybackService : MediaSessionService() {
         mainHandler.removeCallbacks(sponsorTickRunnable)
         loadJob?.cancel()
         extrasJob?.cancel()
+        nextActionJob?.cancel()
         serviceScope.cancel()
         cronetExecutor.shutdown()
         mediaSession?.release()
@@ -213,25 +219,67 @@ class CarPlaybackService : MediaSessionService() {
 
     fun getPlayer(): ExoPlayer = exoPlayer
 
-    fun playVideo(video: VideoItem, queue: List<VideoItem> = emptyList()) {
-        playVideoInternal(video, queue, resetRetry = true)
+    /**
+     * Starts a newly selected video from Home / Music / Search / Subscriptions / History.
+     * Clears unrelated old Up Next items so Next strictly follows YouTube's related Mix/suggestions
+     * for THIS video's genre/artist.
+     */
+    fun playVideo(video: VideoItem) {
+        upNextQueue.clear()
+        playVideoInternal(video, pushCurrentToHistory = true, resetRetry = true)
     }
 
-    private fun playVideoInternal(video: VideoItem, queue: List<VideoItem>, resetRetry: Boolean) {
+    /**
+     * Plays an item chosen from the Up Next drawer while preserving remaining fallback suggestions
+     * until the newly selected video's own related suggestions arrive.
+     */
+    fun playFromUpNext(video: VideoItem) {
+        upNextQueue.removeAll { it.videoId == video.videoId }
+        playVideoInternal(video, pushCurrentToHistory = true, resetRetry = true)
+    }
+
+    private fun recordPlayedSessionId(videoId: String) {
+        playedIdsInSession.remove(videoId)
+        playedIdsInSession.add(videoId)
+        while (playedIdsInSession.size > MAX_SESSION_MEMORY) {
+            val oldest = playedIdsInSession.iterator().next()
+            playedIdsInSession.remove(oldest)
+        }
+    }
+
+    private fun pushHistoryIfNeeded(previous: VideoItem?) {
+        if (previous == null) return
+        if (playedHistory.lastOrNull()?.videoId == previous.videoId) return
+        playedHistory.addLast(previous)
+        while (playedHistory.size > MAX_HISTORY_SIZE) {
+            playedHistory.removeFirst()
+        }
+    }
+
+    private fun playVideoInternal(
+        video: VideoItem,
+        pushCurrentToHistory: Boolean,
+        resetRetry: Boolean
+    ) {
+        nextActionJob?.cancel()
+        if (pushCurrentToHistory) {
+            val prev = PlaybackStateStore.state.value.currentVideo
+            if (prev != null && prev.videoId != video.videoId) {
+                pushHistoryIfNeeded(prev)
+            }
+        }
+        recordPlayedSessionId(video.videoId)
+
         if (resetRetry || lastAttemptedVideoId != video.videoId) {
             errorRetryCount = 0
             lastAttemptedVideoId = video.videoId
-        }
-        val effectiveQueue = if (queue.isNotEmpty()) queue else listOf(video)
-        val idx = effectiveQueue.indexOfFirst { it.videoId == video.videoId }.let {
-            if (it >= 0) it else 0
         }
 
         PlaybackStateStore.update {
             it.copy(
                 currentVideo = video,
-                queue = effectiveQueue,
-                currentIndex = idx,
+                upNextVideos = upNextQueue.toList(),
+                canGoPrevious = playedHistory.isNotEmpty(),
                 sponsorSegments = emptyList(),
                 isLoading = true,
                 actualVideoHeight = 0,
@@ -267,8 +315,8 @@ class CarPlaybackService : MediaSessionService() {
                 PlaybackStateStore.update {
                     it.copy(
                         currentVideo = enrichedVideo,
-                        queue = effectiveQueue,
-                        currentIndex = idx,
+                        upNextVideos = upNextQueue.toList(),
+                        canGoPrevious = playedHistory.isNotEmpty(),
                         isLoading = false,
                         statusNotice = null,
                         errorMessage = null
@@ -294,7 +342,7 @@ class CarPlaybackService : MediaSessionService() {
             }
         }
 
-        // 2. Fetch Up Next metadata & SponsorBlock segments asynchronously in background
+        // 2. Fetch YouTube's related Up Next suggestions & SponsorBlock segments asynchronously in background
         extrasJob = serviceScope.launch {
             runCatching {
                 YouTubeRepository.loadPlaybackExtras(
@@ -306,12 +354,10 @@ class CarPlaybackService : MediaSessionService() {
                     return@onSuccess
                 }
                 activeSegments = extras.sponsorSegments
-                val curState = PlaybackStateStore.state.value
-                val mergedQueue = mergeQueueWithRelated(curState.queue, curState.currentIndex, extras.relatedVideos)
+                updateUpNextFromRelated(video.videoId, extras.relatedVideos)
                 PlaybackStateStore.update {
                     it.copy(
-                        queue = mergedQueue,
-                        relatedVideos = extras.relatedVideos,
+                        upNextVideos = upNextQueue.toList(),
                         sponsorSegments = extras.sponsorSegments
                     )
                 }
@@ -319,14 +365,68 @@ class CarPlaybackService : MediaSessionService() {
         }
     }
 
+    private fun updateUpNextFromRelated(currentVideoId: String, freshRelated: List<VideoItem>) {
+        if (freshRelated.isEmpty()) return
+
+        // Prefer related videos not yet played in this session so Next never loops A <-> B
+        val unseenFresh = freshRelated.filter {
+            it.videoId != currentVideoId && !playedIdsInSession.contains(it.videoId)
+        }
+        val primary = unseenFresh.ifEmpty {
+            freshRelated.filter { it.videoId != currentVideoId }
+        }
+
+        val seenIds = HashSet<String>()
+        seenIds.add(currentVideoId)
+        val merged = ArrayList<VideoItem>()
+        for (item in primary) {
+            if (seenIds.add(item.videoId)) {
+                merged.add(item)
+            }
+        }
+        // Keep a few unseen fallback items from previous related list at the tail
+        for (tailItem in upNextQueue) {
+            if (merged.size >= 25) break
+            if (!playedIdsInSession.contains(tailItem.videoId) && seenIds.add(tailItem.videoId)) {
+                merged.add(tailItem)
+            }
+        }
+
+        upNextQueue.clear()
+        upNextQueue.addAll(merged.take(25))
+    }
+
     fun playNext() {
-        val state = PlaybackStateStore.state.value
-        val nextIndex = state.currentIndex + 1
-        if (nextIndex in state.queue.indices) {
-            playVideo(state.queue[nextIndex], state.queue)
-        } else if (state.relatedVideos.isNotEmpty()) {
-            val next = state.relatedVideos.first()
-            playVideo(next, state.queue + state.relatedVideos)
+        if (upNextQueue.isNotEmpty()) {
+            val next = upNextQueue.removeAt(0)
+            playVideoInternal(next, pushCurrentToHistory = true, resetRetry = true)
+            return
+        }
+
+        // If user pressed Next right before background /next call finished, wait briefly for it
+        val current = PlaybackStateStore.state.value.currentVideo ?: return
+        nextActionJob?.cancel()
+        nextActionJob = serviceScope.launch {
+            PlaybackStateStore.update {
+                it.copy(isLoading = true, statusNotice = "Đang tìm bài tiếp theo cùng thể loại...")
+            }
+            extrasJob?.join()
+            if (upNextQueue.isEmpty()) {
+                runCatching {
+                    YouTubeRepository.loadPlaybackExtras(current.videoId, loadSponsorSegments = false)
+                }.onSuccess { extras ->
+                    updateUpNextFromRelated(current.videoId, extras.relatedVideos)
+                }
+            }
+            if (upNextQueue.isNotEmpty()) {
+                val next = upNextQueue.removeAt(0)
+                playVideoInternal(next, pushCurrentToHistory = true, resetRetry = true)
+            } else {
+                PlaybackStateStore.update {
+                    it.copy(isLoading = false, statusNotice = "Chưa có gợi ý bài tiếp theo")
+                }
+                mainHandler.postDelayed({ PlaybackStateStore.clearNotice() }, 2_000L)
+            }
         }
     }
 
@@ -335,10 +435,13 @@ class CarPlaybackService : MediaSessionService() {
             exoPlayer.seekTo(0L)
             return
         }
-        val state = PlaybackStateStore.state.value
-        val prevIndex = state.currentIndex - 1
-        if (prevIndex in state.queue.indices) {
-            playVideo(state.queue[prevIndex], state.queue)
+        if (playedHistory.isNotEmpty()) {
+            val current = PlaybackStateStore.state.value.currentVideo
+            val prev = playedHistory.removeLast()
+            if (current != null && upNextQueue.firstOrNull()?.videoId != current.videoId) {
+                upNextQueue.add(0, current)
+            }
+            playVideoInternal(prev, pushCurrentToHistory = false, resetRetry = true)
         } else {
             exoPlayer.seekTo(0L)
         }
@@ -446,7 +549,6 @@ class CarPlaybackService : MediaSessionService() {
         val dataSourceFactory = createHttpDataSourceFactory(userAgent, headers)
 
         // 1. Prefer HLS first for Live, VISIONOS/IOS, or when SABR is present alongside HLS
-        // (VISIONOS/IOS HLS delivers full sharp 1080p H.264/HEVC without 403!)
         val preferHls = formatInfo.containsHlsUrl() && (
             formatInfo.isLive ||
                 formatInfo.hasExtendedHlsFormats() ||
@@ -591,20 +693,6 @@ class CarPlaybackService : MediaSessionService() {
         }
     }
 
-    private fun mergeQueueWithRelated(
-        baseQueue: List<VideoItem>,
-        currentIdx: Int,
-        related: List<VideoItem>
-    ): List<VideoItem> {
-        // If user tapped a single video (or is near end of queue), append YouTube related items
-        if (baseQueue.size - 1 - currentIdx >= 3 || related.isEmpty()) {
-            return baseQueue
-        }
-        val existingIds = baseQueue.mapTo(HashSet()) { it.videoId }
-        val extra = related.filter { existingIds.add(it.videoId) }.take(15)
-        return baseQueue + extra
-    }
-
     /**
      * Intercepts MediaSession commands from car steering-wheel buttons (Next/Prev/Play/Pause/Seek)
      * and exposes current video title/channel/artwork to the car head unit widget & ODO cluster.
@@ -660,6 +748,8 @@ class CarPlaybackService : MediaSessionService() {
         private const val TAG = "CarPlaybackService"
         private const val SPONSOR_CHECK_INTERVAL_MS = 500L
         private const val MAX_ERROR_RETRIES = 3
+        private const val MAX_HISTORY_SIZE = 50
+        private const val MAX_SESSION_MEMORY = 100
 
         @Volatile
         var instance: CarPlaybackService? = null
