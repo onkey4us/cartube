@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.CarTube" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/car_accent</item>
+        <item name="colorPrimaryVariant">@color/car_accent</item>
+        <item name="colorOnPrimary">@color/car_text_primary</item>
+        <item name="colorSecondary">@color/car_accent</item>
+        <item name="android:windowBackground">@color/car_bg</item>
+        <item name="android:statusBarColor">@color/car_bg</item>
+        <item name="android:navigationBarColor">@color/car_bg</item>
+    </style>
+
+    <style name="Theme.CarTube.Player" parent="Theme.CarTube">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowBackground">#FF000000</item>
+    </style>
+</resources>

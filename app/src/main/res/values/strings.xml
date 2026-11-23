@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CarTube</string>
+    <string name="nav_home">Trang chủ</string>
+    <string name="nav_music">Âm nhạc</string>
+    <string name="nav_subscriptions">Kênh đăng ký</string>
+    <string name="nav_history">Lịch sử</string>
+    <string name="nav_search">Tìm kiếm</string>
+    <string name="nav_account">Đăng nhập</string>
+    <string name="nav_settings">Cài đặt</string>
+    <string name="search_hint">Nhập tên bài hát, video hoặc kênh...</string>
+    <string name="search_prompt">Nhập từ khóa ở phía trên để tìm kiếm trên YouTube</string>
+    <string name="sign_in_required_hint">Vui lòng chọn mục Đăng nhập (QR) ở thanh bên trái để xem Kênh đăng ký và Lịch sử của bạn.</string>
+    <string name="empty_feed">Không có video nào để hiển thị.</string>
+    <string name="error_load_feed">Không thể tải dữ liệu. Kiểm tra kết nối mạng và thử lại.</string>
+    <string name="error_load_more">Không tải thêm được danh sách.</string>
+    <string name="load_more">Tải thêm video</string>
+    <string name="loading">Đang tải...</string>
+    <string name="retry">Thử lại</string>
+</resources>

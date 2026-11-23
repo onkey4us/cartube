@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/car_bg"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/btnBack"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:background="@drawable/bg_player_circle_btn"
+            android:contentDescription="Quay lại"
+            android:src="@drawable/ic_back" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:text="Tài khoản YouTube (OAuth2 QR)"
+            android:textColor="@color/car_text_primary"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- Signed-in Panel -->
+    <LinearLayout
+        android:id="@+id/signedInContainer"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tvAccountName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/car_text_primary"
+            android:textSize="26sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvAccountEmail"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textColor="@color/car_text_secondary"
+            android:textSize="17sp" />
+
+        <Button
+            android:id="@+id/btnSignOut"
+            android:layout_width="wrap_content"
+            android:layout_height="56dp"
+            android:layout_marginTop="24dp"
+            android:backgroundTint="@color/car_accent"
+            android:paddingHorizontal="32dp"
+            android:text="Đăng xuất tài khoản"
+            android:textColor="@color/car_text_primary"
+            android:textSize="16sp" />
+    </LinearLayout>
+
+    <!-- QR Sign-in Panel -->
+    <LinearLayout
+        android:id="@+id/qrContainer"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:padding="16dp">
+
+        <FrameLayout
+            android:layout_width="280dp"
+            android:layout_height="280dp"
+            android:background="#FFFFFFFF"
+            android:padding="14dp">
+
+            <ImageView
+                android:id="@+id/ivQrCode"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:contentDescription="QR Code đăng nhập" />
+
+            <ProgressBar
+                android:id="@+id/progressQr"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:layout_gravity="center" />
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="36dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Bước 1: Quét QR hoặc mở trên điện thoại:"
+                android:textColor="@color/car_text_secondary"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/tvActivationUrl"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="https://www.youtube.com/activate"
+                android:textColor="@color/car_accent"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:text="Bước 2: Nhập mã kích hoạt:"
+                android:textColor="@color/car_text_secondary"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/tvActivationCode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_card"
+                android:letterSpacing="0.15"
+                android:paddingHorizontal="24dp"
+                android:paddingVertical="12dp"
+                android:text="---- ----"
+                android:textColor="@color/car_text_primary"
+                android:textSize="34sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvLoginStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:textColor="@color/car_text_secondary"
+                android:textSize="15sp" />
+
+            <Button
+                android:id="@+id/btnStartLogin"
+                android:layout_width="wrap_content"
+                android:layout_height="52dp"
+                android:layout_marginTop="16dp"
+                android:backgroundTint="@color/car_surface_elevated"
+                android:paddingHorizontal="24dp"
+                android:text="Lấy mã mới"
+                android:textColor="@color/car_text_primary" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

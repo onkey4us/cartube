@@ -1,0 +1,45 @@
+buildscript {
+    ext {
+        agpVersion = '7.4.2'
+        kotlinVersion = '1.8.10'
+        kotlinxVersion = '1.7.3'
+        okhttpVersion = '3.12.13'
+        kotlinCoreXVersion = '1.12.0'
+    }
+
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://jitpack.io' }
+    }
+
+    dependencies {
+        classpath "com.android.tools.build:gradle:$agpVersion"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion"
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://jitpack.io' }
+    }
+
+    configurations.all {
+        resolutionStrategy {
+            force "com.squareup.okhttp3:okhttp:$okhttpVersion"
+            force "org.jetbrains.kotlin:kotlin-stdlib:$kotlinVersion"
+            force "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlinVersion"
+            force "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlinVersion"
+            force "org.jetbrains.kotlin:kotlin-stdlib-common:$kotlinVersion"
+            force "org.jetbrains.kotlinx:kotlinx-coroutines-android:$kotlinxVersion"
+            force "org.jetbrains.kotlinx:kotlinx-coroutines-core:$kotlinxVersion"
+            force "androidx.core:core-ktx:$kotlinCoreXVersion"
+        }
+    }
+}
+
+tasks.register('clean', Delete) {
+    delete rootProject.buildDir
+}

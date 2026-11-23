@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="car_bg">#FF0D0F14</color>
+    <color name="car_surface">#FF161A22</color>
+    <color name="car_surface_elevated">#FF1F2530</color>
+    <color name="car_accent">#FFFF2E4C</color>
+    <color name="car_accent_dim">#33FF2E4C</color>
+    <color name="car_text_primary">#FFF5F7FA</color>
+    <color name="car_text_secondary">#FFA0AAB8</color>
+    <color name="car_divider">#FF262D3B</color>
+    <color name="car_overlay">#AA000000</color>
+</resources>

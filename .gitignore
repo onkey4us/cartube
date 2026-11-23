@@ -1,0 +1,21 @@
+# Build outputs
+*.apk
+*.aab
+*.ap_
+*.dex
+.gradle/
+build/
+app/build/
+captures/
+local.properties
+*.iml
+.idea/
+.DS_Store
+
+# Keystores (keep private)
+*.jks
+*.keystore
+
+# Upstream repos (cloned by setup script / GitHub Actions)
+MediaServiceCore/
+SharedModules/
