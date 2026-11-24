@@ -12,7 +12,7 @@ class CarPrefs(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     /**
-     * 0 = Tự động (adaptive up to 1080p), or explicit cap 480 / 720 / 1080.
+     * 0 = Tự động (adaptive up to 720p, matching the 720px car display), or explicit cap 480 / 720 / 1080.
      */
     var maxVideoHeight: Int
         get() = prefs.getInt(KEY_MAX_VIDEO_HEIGHT, 0)

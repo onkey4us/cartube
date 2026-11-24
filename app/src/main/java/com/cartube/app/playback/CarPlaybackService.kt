@@ -86,6 +86,9 @@ class CarPlaybackService : MediaSessionService() {
     private var lastAttemptedVideoId: String? = null
     private var lastResumeSaveTimeMs: Long = 0L
 
+    // User-chosen "Chỉ tiếng" mode; survives PlayerActivity recreation (unlike temporary background video-off)
+    private var userForcedAudioOnly: Boolean = false
+
     private val sponsorTickRunnable = object : Runnable {
         override fun run() {
             if (::exoPlayer.isInitialized) {
@@ -118,6 +121,9 @@ class CarPlaybackService : MediaSessionService() {
 
     private fun persistCurrentResumeState() {
         if (!::exoPlayer.isInitialized || !::prefs.isInitialized) return
+        // While a new track is loading (or the player was just stopped), exoPlayer.currentPosition
+        // still reflects the previous track; never overwrite the new track's saved position with it.
+        if (PlaybackStateStore.state.value.isLoading || exoPlayer.playbackState == Player.STATE_IDLE) return
         val video = PlaybackStateStore.state.value.currentVideo ?: return
         val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
         val dur = exoPlayer.duration.takeIf { it > 0L } ?: video.durationMs
@@ -365,6 +371,7 @@ class CarPlaybackService : MediaSessionService() {
         startPositionMs: Long = 0L
     ) {
         nextActionJob?.cancel()
+        var effectiveStartMs = if (video.isLive) 0L else startPositionMs.coerceAtLeast(0L)
         if (pushCurrentToHistory) {
             val prev = PlaybackStateStore.state.value.currentVideo
             if (prev != null && prev.videoId != video.videoId) {
@@ -387,7 +394,7 @@ class CarPlaybackService : MediaSessionService() {
                 sponsorSegments = emptyList(),
                 isLoading = true,
                 actualVideoHeight = 0,
-                positionMs = startPositionMs.coerceAtLeast(0L),
+                positionMs = effectiveStartMs,
                 durationMs = video.durationMs,
                 errorMessage = null,
                 statusNotice = if (resetRetry) null else it.statusNotice
@@ -418,17 +425,25 @@ class CarPlaybackService : MediaSessionService() {
                     author = formatInfo.author?.takeIf { it.isNotBlank() } ?: video.author
                 )
 
+                // Live streams and nearly-finished videos start cleanly from the beginning
+                if (enrichedVideo.isLive ||
+                    (enrichedVideo.durationMs > 10_000L && effectiveStartMs >= enrichedVideo.durationMs - 5_000L)
+                ) {
+                    effectiveStartMs = 0L
+                }
+
                 PlaybackStateStore.update {
                     it.copy(
                         currentVideo = enrichedVideo,
                         upNextVideos = upNextQueue.toList(),
                         canGoPrevious = playedHistory.isNotEmpty(),
                         isLoading = false,
+                        positionMs = effectiveStartMs,
                         statusNotice = null,
                         errorMessage = null
                     )
                 }
-                prefs.saveLastPlayed(enrichedVideo, startPositionMs.coerceAtLeast(0L), enrichedVideo.durationMs)
+                prefs.saveLastPlayed(enrichedVideo, effectiveStartMs, enrichedVideo.durationMs)
                 lastResumeSaveTimeMs = System.currentTimeMillis()
 
                 val mediaSource = withContext(Dispatchers.IO) {
@@ -436,8 +451,8 @@ class CarPlaybackService : MediaSessionService() {
                 }
 
                 applyTrackPreferences()
-                if (startPositionMs > 0L) {
-                    exoPlayer.setMediaSource(mediaSource, startPositionMs)
+                if (effectiveStartMs > 0L) {
+                    exoPlayer.setMediaSource(mediaSource, effectiveStartMs)
                 } else {
                     exoPlayer.setMediaSource(mediaSource)
                 }
@@ -576,6 +591,13 @@ class CarPlaybackService : MediaSessionService() {
         PlaybackStateStore.update { it.copy(isAudioOnly = !enabled) }
     }
 
+    fun isUserForcedAudioOnly(): Boolean = userForcedAudioOnly
+
+    fun setUserForcedAudioOnly(audioOnly: Boolean) {
+        userForcedAudioOnly = audioOnly
+        setVideoEnabled(!audioOnly)
+    }
+
     fun updateMaxVideoHeight(maxHeight: Int) {
         prefs.maxVideoHeight = maxHeight
         applyTrackPreferences()
@@ -591,7 +613,8 @@ class CarPlaybackService : MediaSessionService() {
 
     private fun effectiveMaxVideoHeight(): Int {
         val raw = prefs.maxVideoHeight
-        return if (raw <= 0) 1080 else raw
+        // "Tự động" caps at 720p to match the 720px car display; explicit 1080p remains selectable
+        return if (raw <= 0) 720 else raw
     }
 
     private fun applyTrackPreferences() {

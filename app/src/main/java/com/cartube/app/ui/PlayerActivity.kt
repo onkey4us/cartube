@@ -31,7 +31,6 @@ import com.cartube.app.R
 import com.cartube.app.data.CarPrefs
 import com.cartube.app.data.VideoItem
 import com.cartube.app.data.VoiceAndLinkHelper
-import com.cartube.app.data.YouTubeRepository
 import com.cartube.app.databinding.ActivityPlayerBinding
 import com.cartube.app.playback.CarPlaybackService
 import com.cartube.app.playback.PlaybackStateStore
@@ -47,7 +46,6 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var upNextAdapter: UpNextAdapter
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
-    private var userForcedAudioOnly: Boolean = false
     private var isSeeking: Boolean = false
     private var isControlsVisible: Boolean = true
 
@@ -392,7 +390,7 @@ class PlayerActivity : AppCompatActivity() {
             {
                 val service = CarPlaybackService.instance ?: return@addListener
                 attachPlayerToActiveView()
-                service.setVideoEnabled(!userForcedAudioOnly)
+                service.setVideoEnabled(!service.isUserForcedAudioOnly())
                 triggerPendingPlaybackIfReady()
                 updateQualityChip()
                 if (usesOverlayControls) {
@@ -439,6 +437,7 @@ class PlayerActivity : AppCompatActivity() {
             720 -> 1080
             else -> 0
         }
+        prefs.maxVideoHeight = nextHeight
         CarPlaybackService.instance?.updateMaxVideoHeight(nextHeight)
         updateQualityChip()
         val label = if (nextHeight <= 0) "Tự động" else "${nextHeight}p"
@@ -447,8 +446,10 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun toggleAudioOnly() {
-        userForcedAudioOnly = !userForcedAudioOnly
-        CarPlaybackService.instance?.setVideoEnabled(!userForcedAudioOnly)
+        val service = CarPlaybackService.instance
+        if (service != null) {
+            service.setUserForcedAudioOnly(!service.isUserForcedAudioOnly())
+        }
         updateAudioOnlyUi()
         if (usesOverlayControls) scheduleAutoHide()
     }
@@ -477,20 +478,8 @@ class PlayerActivity : AppCompatActivity() {
             if (raw.isNotEmpty()) {
                 val cleaned = VoiceAndLinkHelper.cleanVoiceQuery(raw)
                 showQuickSeekHint("Đang mở: $cleaned…")
-                lifecycleScope.launch {
-                    runCatching {
-                        YouTubeRepository.search(cleaned)
-                    }.onSuccess { page ->
-                        val first = page.items.firstOrNull()
-                        if (first != null) {
-                            CarPlaybackService.instance?.playVideo(first)
-                        } else {
-                            showQuickSeekHint("Không tìm thấy: $cleaned")
-                        }
-                    }.onFailure {
-                        showQuickSeekHint("Không tìm được bài hát, thử lại nhé")
-                    }
-                }
+                // Search runs in the service scope so it survives activity close/recreate
+                CarPlaybackService.instance?.playVoiceSearch(raw)
             }
         }
     }
@@ -694,7 +683,8 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun updateAudioOnlyUi() {
-        val isAudio = PlaybackStateStore.state.value.isAudioOnly || userForcedAudioOnly
+        val isAudio = PlaybackStateStore.state.value.isAudioOnly ||
+            (CarPlaybackService.instance?.isUserForcedAudioOnly() == true)
         binding.audioOnlyOverlay.visibility = if (isAudio) View.VISIBLE else View.GONE
         val label = getString(if (isAudio) R.string.action_video_on else R.string.action_audio_only)
 
