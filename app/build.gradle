@@ -53,9 +53,9 @@ android {
         abi {
             enable true
             reset()
-            // arm64-v8a for modern head units (e.g. Beijing X7 C3005H_MX8Q), armeabi-v7a for older 32-bit units
-            include 'arm64-v8a', 'armeabi-v7a'
-            universalApk true
+            // Build arm64-v8a only for Beijing X7 C3005H_MX8Q (cuts CI artifact size from 96 MB -> 22 MB)
+            include 'arm64-v8a'
+            universalApk false
         }
     }
 
