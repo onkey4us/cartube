@@ -33,6 +33,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.cartube.app.data.CarPrefs
 import com.cartube.app.data.ClientSourceHelper
+import com.cartube.app.data.SessionSignals
 import com.cartube.app.data.UpNextContextRanker
 import com.cartube.app.data.VideoItem
 import com.cartube.app.data.VoiceAndLinkHelper
@@ -78,6 +79,19 @@ class CarPlaybackService : MediaSessionService() {
     private val playedIdsInSession = LinkedHashSet<String>()
     private val upNextQueue = ArrayList<VideoItem>()
 
+    // Listener-aware Up Next. A video reached through Next / autoplay only becomes the new source
+    // of suggestions once it has really been listened to ("accepted"); until then the queue keeps
+    // following the last accepted video, so skipping a song never drags the queue toward it.
+    private var queueSeed: VideoItem? = null
+    private var queueSourceRaw: List<VideoItem> = emptyList()
+    private var currentAccepted: Boolean = false
+    private var currentListenedMs: Long = 0L
+    private var pendingRelatedSeed: VideoItem? = null
+    private var pendingRelated: List<VideoItem>? = null
+    private val skippedAuthors = HashMap<String, Int>()
+    private val relatedHits = LinkedHashMap<String, Int>()
+    private val relatedHitsCountedFor = HashSet<String>()
+
     private var activeSegments: List<SponsorSegment> = emptyList()
     private val skippedSegmentKeys = HashSet<String>()
     private var isVideoTrackEnabled: Boolean = true
@@ -108,6 +122,7 @@ class CarPlaybackService : MediaSessionService() {
                     }
                 }
                 if (exoPlayer.isPlaying) {
+                    trackListening(dur)
                     checkSponsorSegments()
                     syncHistoryPeriodically()
                     val now = System.currentTimeMillis()
@@ -193,7 +208,9 @@ class CarPlaybackService : MediaSessionService() {
                 if (playbackState == Player.STATE_READY) {
                     rememberWorkingClient()
                 } else if (playbackState == Player.STATE_ENDED) {
-                    playNext()
+                    // Played to the end: the strongest "I liked this" signal there is.
+                    acceptCurrentVideo()
+                    advanceToNext()
                 }
             }
 
@@ -211,7 +228,12 @@ class CarPlaybackService : MediaSessionService() {
                         )
                     }
                     YouTubeServiceManager.instance().switchNextClientNow()
-                    playVideoInternal(current, pushCurrentToHistory = false, resetRetry = false)
+                    playVideoInternal(
+                        current,
+                        pushCurrentToHistory = false,
+                        resetRetry = false,
+                        chosenByUser = currentAccepted
+                    )
                 } else {
                     PlaybackStateStore.update {
                         it.copy(
@@ -294,10 +316,13 @@ class CarPlaybackService : MediaSessionService() {
      */
     fun playVideo(video: VideoItem, startPositionMs: Long = 0L) {
         upNextQueue.clear()
+        queueSeed = null
+        queueSourceRaw = emptyList()
         playVideoInternal(
             video = video,
             pushCurrentToHistory = true,
             resetRetry = true,
+            chosenByUser = true,
             startPositionMs = startPositionMs
         )
     }
@@ -308,7 +333,7 @@ class CarPlaybackService : MediaSessionService() {
      */
     fun playFromUpNext(video: VideoItem) {
         upNextQueue.removeAll { it.videoId == video.videoId }
-        playVideoInternal(video, pushCurrentToHistory = true, resetRetry = true)
+        playVideoInternal(video, pushCurrentToHistory = true, resetRetry = true, chosenByUser = true)
     }
 
     fun handleVoiceOrLinkTarget(target: VoiceOrLinkTarget) {
@@ -369,10 +394,24 @@ class CarPlaybackService : MediaSessionService() {
         video: VideoItem,
         pushCurrentToHistory: Boolean,
         resetRetry: Boolean,
+        chosenByUser: Boolean,
         startPositionMs: Long = 0L
     ) {
         nextActionJob?.cancel()
         var effectiveStartMs = if (video.isLive) 0L else startPositionMs.coerceAtLeast(0L)
+        // A retry of the same video (client switch after an error) keeps its listening progress.
+        if (PlaybackStateStore.state.value.currentVideo?.videoId != video.videoId) {
+            currentListenedMs = 0L
+            currentAccepted = chosenByUser
+            pendingRelatedSeed = null
+            pendingRelated = null
+        } else if (chosenByUser) {
+            currentAccepted = true
+        }
+        if (chosenByUser) {
+            // Picking a video on purpose forgives earlier skips of that channel.
+            skippedAuthors.remove(UpNextContextRanker.normalizeAuthor(video.author))
+        }
         if (pushCurrentToHistory) {
             val prev = PlaybackStateStore.state.value.currentVideo
             if (prev != null && prev.videoId != video.videoId) {
@@ -481,12 +520,8 @@ class CarPlaybackService : MediaSessionService() {
         // 2. Fetch YouTube's related Up Next suggestions & SponsorBlock segments asynchronously in background
         extrasJob = serviceScope.launch {
             runCatching {
-                val latestSeed = PlaybackStateStore.state.value.currentVideo
-                    ?.takeIf { it.videoId == video.videoId }
-                    ?: video
                 YouTubeRepository.loadPlaybackExtras(
                     videoId = video.videoId,
-                    seedVideo = latestSeed,
                     loadSponsorSegments = prefs.sponsorBlockEnabled
                 )
             }.onSuccess { extras ->
@@ -503,7 +538,13 @@ class CarPlaybackService : MediaSessionService() {
                     isLive = currentActive.isLive || (meta?.isLive == true)
                 )
                 activeSegments = extras.sponsorSegments
-                updateUpNextFromRelated(resolvedSeed, extras.relatedVideos)
+                pendingRelatedSeed = resolvedSeed
+                pendingRelated = extras.relatedVideos
+                // Not accepted yet: hold these suggestions back and keep the current queue,
+                // unless there is nothing else to offer.
+                if (currentAccepted || upNextQueue.isEmpty()) {
+                    adoptPendingRelated()
+                }
                 PlaybackStateStore.update {
                     it.copy(
                         currentVideo = resolvedSeed,
@@ -548,15 +589,118 @@ class CarPlaybackService : MediaSessionService() {
             }
         }
 
-        val ranked = UpNextContextRanker.rank(seedVideo, merged)
+        queueSeed = seedVideo
+        queueSourceRaw = merged
+        val ranked = UpNextContextRanker.rank(seedVideo, merged, buildSessionSignals())
         upNextQueue.clear()
         upNextQueue.addAll(ranked.take(25))
     }
 
+    private fun buildSessionSignals(): SessionSignals {
+        val recent = ArrayList(playedHistory.takeLast(RECENT_PLAYED_FOR_RANKING))
+        val current = PlaybackStateStore.state.value.currentVideo
+        if (current != null && recent.lastOrNull()?.videoId != current.videoId) {
+            recent.add(current)
+        }
+        return SessionSignals(
+            recentlyPlayed = recent,
+            skippedAuthors = HashMap(skippedAuthors),
+            relatedHits = HashMap(relatedHits)
+        )
+    }
+
+    /** Counts real listening time (not seek position) and accepts the video once it has had enough. */
+    private fun trackListening(playerDurationMs: Long) {
+        if (currentAccepted) return
+        val video = PlaybackStateStore.state.value.currentVideo ?: return
+        currentListenedMs += SPONSOR_CHECK_INTERVAL_MS
+        val durationMs = if (playerDurationMs > 0L) playerDurationMs else video.durationMs
+        val acceptAfterMs = if (durationMs > 0L) {
+            minOf(durationMs / 2, ACCEPT_LISTEN_CAP_MS)
+        } else {
+            ACCEPT_LISTEN_UNKNOWN_DURATION_MS
+        }
+        if (currentListenedMs >= acceptAfterMs) {
+            acceptCurrentVideo()
+        }
+    }
+
+    /** The listener stayed with this video: it becomes the source of what plays next. */
+    private fun acceptCurrentVideo() {
+        if (currentAccepted) return
+        val video = PlaybackStateStore.state.value.currentVideo ?: return
+        currentAccepted = true
+        skippedAuthors.remove(UpNextContextRanker.normalizeAuthor(video.author))
+        if (adoptPendingRelated()) {
+            PlaybackStateStore.update { it.copy(upNextVideos = upNextQueue.toList()) }
+        }
+    }
+
+    private fun adoptPendingRelated(): Boolean {
+        val seed = pendingRelatedSeed ?: return false
+        val related = pendingRelated ?: return false
+        pendingRelatedSeed = null
+        pendingRelated = null
+        if (related.isEmpty()) return false
+        if (currentAccepted && relatedHitsCountedFor.add(seed.videoId)) {
+            for (item in related) {
+                relatedHits[item.videoId] = (relatedHits[item.videoId] ?: 0) + 1
+            }
+            val overflow = relatedHits.size - MAX_RELATED_HITS_MEMORY
+            if (overflow > 0) {
+                val oldest = relatedHits.keys.take(overflow)
+                oldest.forEach { relatedHits.remove(it) }
+            }
+        }
+        updateUpNextFromRelated(seed, related)
+        return true
+    }
+
+    /**
+     * Next pressed shortly after an autoplayed video started = "not this". Its channel is demoted
+     * for the rest of the session and the remaining queue is re-ranked without it leading.
+     */
+    private fun registerSkipIfEarly() {
+        if (currentAccepted) return
+        val video = PlaybackStateStore.state.value.currentVideo ?: return
+        // Never heard at all (still loading / failed to play) says nothing about taste.
+        if (currentListenedMs < MIN_LISTEN_FOR_SKIP_SIGNAL_MS) return
+        val durationMs = exoPlayer.duration.takeIf { it > 0L } ?: video.durationMs
+        val earlySkipBeforeMs = if (durationMs > 0L) {
+            minOf(durationMs * 3 / 10, EARLY_SKIP_CAP_MS)
+        } else {
+            EARLY_SKIP_UNKNOWN_DURATION_MS
+        }
+        if (currentListenedMs >= earlySkipBeforeMs) return
+        val author = UpNextContextRanker.normalizeAuthor(video.author)
+        if (author.isEmpty()) return
+        skippedAuthors[author] = (skippedAuthors[author] ?: 0) + 1
+        Log.i(TAG, "Early skip after ${currentListenedMs}ms: demoting channel \"${video.author}\"")
+        rerankQueueAfterSkip()
+    }
+
+    private fun rerankQueueAfterSkip() {
+        val seed = queueSeed ?: return
+        if (upNextQueue.size <= 1) return
+        val queuedIds = upNextQueue.mapTo(HashSet()) { it.videoId }
+        val pool = queueSourceRaw.filter { it.videoId in queuedIds }
+        // Queue holds something that did not come from the related list (e.g. re-queued by Previous)
+        if (pool.size != upNextQueue.size) return
+        val ranked = UpNextContextRanker.rank(seed, pool, buildSessionSignals())
+        upNextQueue.clear()
+        upNextQueue.addAll(ranked)
+    }
+
+    /** Next requested by the listener (touch, steering wheel, media key). */
     fun playNext() {
+        registerSkipIfEarly()
+        advanceToNext()
+    }
+
+    private fun advanceToNext() {
         if (upNextQueue.isNotEmpty()) {
             val next = upNextQueue.removeAt(0)
-            playVideoInternal(next, pushCurrentToHistory = true, resetRetry = true)
+            playVideoInternal(next, pushCurrentToHistory = true, resetRetry = true, chosenByUser = false)
             return
         }
 
@@ -569,10 +713,12 @@ class CarPlaybackService : MediaSessionService() {
             }
             extrasJob?.join()
             if (upNextQueue.isEmpty()) {
+                adoptPendingRelated()
+            }
+            if (upNextQueue.isEmpty()) {
                 runCatching {
                     YouTubeRepository.loadPlaybackExtras(
                         videoId = current.videoId,
-                        seedVideo = current,
                         loadSponsorSegments = false
                     )
                 }.onSuccess { extras ->
@@ -581,7 +727,7 @@ class CarPlaybackService : MediaSessionService() {
             }
             if (upNextQueue.isNotEmpty()) {
                 val next = upNextQueue.removeAt(0)
-                playVideoInternal(next, pushCurrentToHistory = true, resetRetry = true)
+                playVideoInternal(next, pushCurrentToHistory = true, resetRetry = true, chosenByUser = false)
             } else {
                 PlaybackStateStore.update {
                     it.copy(isLoading = false, statusNotice = "Chưa có gợi ý bài tiếp theo")
@@ -602,7 +748,7 @@ class CarPlaybackService : MediaSessionService() {
             if (current != null && upNextQueue.firstOrNull()?.videoId != current.videoId) {
                 upNextQueue.add(0, current)
             }
-            playVideoInternal(prev, pushCurrentToHistory = false, resetRetry = true)
+            playVideoInternal(prev, pushCurrentToHistory = false, resetRetry = true, chosenByUser = true)
         } else {
             exoPlayer.seekTo(0L)
         }
@@ -924,6 +1070,15 @@ class CarPlaybackService : MediaSessionService() {
         private const val MAX_ERROR_RETRIES = 3
         private const val MAX_HISTORY_SIZE = 50
         private const val MAX_SESSION_MEMORY = 100
+
+        // Listener signals for Up Next
+        private const val ACCEPT_LISTEN_CAP_MS = 120_000L
+        private const val ACCEPT_LISTEN_UNKNOWN_DURATION_MS = 60_000L
+        private const val EARLY_SKIP_CAP_MS = 45_000L
+        private const val EARLY_SKIP_UNKNOWN_DURATION_MS = 30_000L
+        private const val MIN_LISTEN_FOR_SKIP_SIGNAL_MS = 2_000L
+        private const val RECENT_PLAYED_FOR_RANKING = 15
+        private const val MAX_RELATED_HITS_MEMORY = 1_500
 
         @Volatile
         var instance: CarPlaybackService? = null

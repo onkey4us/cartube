@@ -1,8 +1,22 @@
 package com.cartube.app.data
 
+import java.text.Normalizer
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
+
+/**
+ * What the listener has told us so far in this playback session, without pressing any extra button.
+ *
+ * @param recentlyPlayed videos already played, oldest first, INCLUDING the one playing right now.
+ * @param skippedAuthors normalized channel name -> how many of its videos were skipped early.
+ * @param relatedHits videoId -> in how many fully-listened videos' related lists it appeared.
+ */
+data class SessionSignals(
+    val recentlyPlayed: List<VideoItem> = emptyList(),
+    val skippedAuthors: Map<String, Int> = emptyMap(),
+    val relatedHits: Map<String, Int> = emptyMap()
+)
 
 /**
  * Context-aware ranker for CarTube's Up Next queue:
@@ -13,6 +27,10 @@ import kotlin.math.ln
  * 3. Preserves Music context (boosts songs/MVs and demotes unrelated News, Kids songs, Movie recaps,
  *    or Sports highlights injected by YouTube's generic personal shelves).
  * 4. Preserves YouTube's natural relevance order among equally well-matched candidates.
+ * 5. Follows the listener: demotes channels they skipped early and boosts candidates that keep
+ *    showing up next to videos they listened to in full (see [SessionSignals]).
+ * 6. Avoids repeats: other uploads of a song already heard (MV / lyric / cover / remix) sink to the
+ *    bottom, and no more than [MAX_SAME_ARTIST_RUN] videos of one channel play back to back.
  */
 object UpNextContextRanker {
 
@@ -40,6 +58,22 @@ object UpNextContextRanker {
         """(?iu)\b(phỏng\s+vấn|hậu\s+trường|reaction|react|talkshow|talk\s+show|podcast|tâm\s+sự|vlog)\b"""
     )
 
+    private val BRACKETED_REGEX = Regex("""[(\[{【（][^)\]}】）]*[)\]}】）]""")
+    private val COMBINING_MARKS_REGEX = Regex("""\p{Mn}+""")
+    private val NON_WORD_REGEX = Regex("""[^\p{L}\p{N}]+""")
+
+    // Words (already lowercased, diacritics stripped) that describe the upload, not the song.
+    private val TITLE_NOISE_WORDS = setOf(
+        "official", "music", "video", "mv", "audio", "lyric", "lyrics", "karaoke", "cover", "remix",
+        "live", "version", "ver", "hd", "4k", "2k", "full", "ft", "feat", "prod", "by", "x",
+        "vietsub", "engsub", "sub", "visualizer", "performance", "acoustic", "lofi", "topic", "vevo",
+        "channel", "tv", "entertainment", "records", "beat"
+    )
+
+    private const val MAX_SAME_ARTIST_RUN = 2
+    private const val RECENT_SONG_MEMORY = 15
+    private const val MAX_SONG_DURATION_MS = 900_000L
+
     private data class ScoredCandidate(
         val item: VideoItem,
         val tier: Int,
@@ -47,7 +81,11 @@ object UpNextContextRanker {
         val youtubeRank: Int
     )
 
-    fun rank(seed: VideoItem?, candidates: List<VideoItem>): List<VideoItem> {
+    fun rank(
+        seed: VideoItem?,
+        candidates: List<VideoItem>,
+        session: SessionSignals = SessionSignals()
+    ): List<VideoItem> {
         if (candidates.size <= 1 || seed == null) return candidates
 
         val seedIsLive = isLiveItem(seed)
@@ -80,15 +118,131 @@ object UpNextContextRanker {
                 seedIsMusic = seedIsMusic,
                 seedIsKids = seedIsKids,
                 seedDurationMs = seedDurationMs,
-                normalizedSeedAuthor = normalizedSeedAuthor
+                normalizedSeedAuthor = normalizedSeedAuthor,
+                authorSkipCount = session.skippedAuthors[normalizeAuthor(cand.author)] ?: 0,
+                relatedHitCount = session.relatedHits[cand.videoId] ?: 0
             )
         }
 
-        return scored.sortedWith(
+        val sorted = scored.sortedWith(
             compareBy<ScoredCandidate> { it.tier }
                 .thenByDescending { it.score }
                 .thenBy { it.youtubeRank }
-        ).map { it.item }
+        )
+        return diversify(seed, sorted, session.recentlyPlayed)
+    }
+
+    fun normalizeAuthor(author: String): String = author.trim().lowercase()
+
+    /**
+     * Post-pass over the score-sorted list:
+     * - a candidate that is the same song as something already heard (or as a better-ranked
+     *   candidate) is moved to the very end instead of being played again in another version;
+     * - a channel may not play more than [MAX_SAME_ARTIST_RUN] times in a row, as long as the same
+     *   tier still has a candidate from another channel to put in between.
+     */
+    private fun diversify(
+        seed: VideoItem,
+        sorted: List<ScoredCandidate>,
+        recentlyPlayed: List<VideoItem>
+    ): List<VideoItem> {
+        val played = if (recentlyPlayed.any { it.videoId == seed.videoId }) {
+            recentlyPlayed
+        } else {
+            recentlyPlayed + seed
+        }
+
+        val heardKeys = played.takeLast(RECENT_SONG_MEMORY).mapTo(ArrayList()) { SongKey.of(it) }
+        val fresh = ArrayList<ScoredCandidate>()
+        val repeats = ArrayList<VideoItem>()
+        for (cand in sorted) {
+            val key = SongKey.of(cand.item)
+            if (heardKeys.any { it.isSameSongAs(key) }) {
+                repeats.add(cand.item)
+            } else {
+                heardKeys.add(key)
+                fresh.add(cand)
+            }
+        }
+
+        var runAuthor = ""
+        var runLength = 0
+        fun extendRun(author: String) {
+            if (author.isNotEmpty() && author == runAuthor) {
+                runLength++
+            } else {
+                runAuthor = author
+                runLength = 1
+            }
+        }
+        for (video in played) extendRun(normalizeAuthor(video.author))
+
+        val result = ArrayList<VideoItem>(sorted.size)
+        while (fresh.isNotEmpty()) {
+            val head = fresh[0]
+            var pick = 0
+            if (runLength >= MAX_SAME_ARTIST_RUN && runAuthor.isNotEmpty() &&
+                normalizeAuthor(head.item.author) == runAuthor
+            ) {
+                val other = fresh.indexOfFirst {
+                    it.tier == head.tier && normalizeAuthor(it.item.author) != runAuthor
+                }
+                if (other > 0) pick = other
+            }
+            val chosen = fresh.removeAt(pick)
+            result.add(chosen.item)
+            extendRun(normalizeAuthor(chosen.item.author))
+        }
+        result.addAll(repeats)
+        return result
+    }
+
+    /** Title reduced to the words that identify the song, ignoring upload/version decoration. */
+    private class SongKey(
+        val titleTokens: Set<String>,
+        val authorTokens: Set<String>,
+        val durationMs: Long
+    ) {
+        fun isSameSongAs(other: SongKey): Boolean {
+            // Only single tracks are compared; long mixes with look-alike titles are different content.
+            if (durationMs > MAX_SONG_DURATION_MS || other.durationMs > MAX_SONG_DURATION_MS) return false
+            val uploaders = authorTokens + other.authorTokens
+            val mine = titleTokens - uploaders
+            val theirs = other.titleTokens - uploaders
+            if (mine.isEmpty() || theirs.isEmpty()) return false
+            // "Tập 12" vs "Tập 13", "... 2025" vs "... 2026" are different videos.
+            if (mine.filterTo(HashSet()) { it.isNumber() } != theirs.filterTo(HashSet()) { it.isNumber() }) {
+                return false
+            }
+            if (mine == theirs) {
+                return mine.size >= 2 || mine.first().let { it.length >= 3 && !it.isNumber() }
+            }
+            val shared = mine.count { it in theirs }
+            val smaller = minOf(mine.size, theirs.size)
+            val larger = maxOf(mine.size, theirs.size)
+            if (smaller < 2) return false
+            if (shared == smaller && smaller * 2 >= larger) return true
+            return shared.toDouble() / (mine.size + theirs.size - shared) >= 0.75
+        }
+
+        companion object {
+            fun of(item: VideoItem): SongKey {
+                val withoutBrackets = tokenize(BRACKETED_REGEX.replace(item.title, " "))
+                val titleTokens = if (withoutBrackets.size >= 2) withoutBrackets else tokenize(item.title)
+                return SongKey(titleTokens, tokenize(item.author), item.durationMs)
+            }
+
+            private fun String.isNumber(): Boolean = all { it.isDigit() }
+
+            private fun tokenize(text: String): Set<String> {
+                val plain = COMBINING_MARKS_REGEX
+                    .replace(Normalizer.normalize(text.lowercase(), Normalizer.Form.NFD), "")
+                    .replace('đ', 'd')
+                return plain.split(NON_WORD_REGEX).filterTo(LinkedHashSet()) {
+                    it.isNotEmpty() && it !in TITLE_NOISE_WORDS
+                }
+            }
+        }
     }
 
     private fun scoreCandidate(
@@ -98,7 +252,9 @@ object UpNextContextRanker {
         seedIsMusic: Boolean,
         seedIsKids: Boolean,
         seedDurationMs: Long,
-        normalizedSeedAuthor: String
+        normalizedSeedAuthor: String,
+        authorSkipCount: Int,
+        relatedHitCount: Int
     ): ScoredCandidate {
         val candIsLive = isLiveItem(cand)
         val candText = "${cand.title} ${cand.author} ${cand.subtitle}"
@@ -108,6 +264,11 @@ object UpNextContextRanker {
         if (cand.shelfIndex == 0) {
             score += 12.0
         }
+
+        // Listener signals: a channel skipped early sinks, and a candidate that several
+        // fully-listened videos all point to rises (the first hit is just "it is related").
+        score -= authorSkipCount.coerceAtMost(3) * 18.0
+        score += (relatedHitCount - 1).coerceIn(0, 3) * 9.0
 
         // Rule 1: If seed is NOT live, push all Livestreams strictly to Tier 3 (very bottom of queue)
         if (!seedIsLive && candIsLive) {

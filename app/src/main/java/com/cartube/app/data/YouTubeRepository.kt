@@ -105,9 +105,12 @@ object YouTubeRepository {
             ?: throw IllegalStateException("Không lấy được luồng phát cho video này.")
     }
 
+    /**
+     * [PlaybackExtras.relatedVideos] is returned in YouTube's own order; the playback service ranks
+     * it once, together with what it knows about the listening session.
+     */
     suspend fun loadPlaybackExtras(
         videoId: String,
-        seedVideo: VideoItem? = null,
         loadSponsorSegments: Boolean
     ): PlaybackExtras = withContext(Dispatchers.IO) {
         coroutineScope {
@@ -121,7 +124,7 @@ object YouTubeRepository {
                 }.getOrDefault(emptyList())
             }
             val metadata = metaDeferred.await()
-            val related = buildRelatedList(metadata, currentVideoId = videoId, seedVideo = seedVideo)
+            val related = buildRelatedList(metadata, currentVideoId = videoId)
             val segments = sponsorDeferred.await()
             PlaybackExtras(
                 metadata = metadata,
@@ -245,8 +248,7 @@ object YouTubeRepository {
 
     private fun buildRelatedList(
         metadata: MediaItemMetadata?,
-        currentVideoId: String,
-        seedVideo: VideoItem?
+        currentVideoId: String
     ): List<VideoItem> {
         if (metadata == null) return emptyList()
         val seen = HashSet<String>()
@@ -275,22 +277,7 @@ object YouTubeRepository {
             }
         }
 
-        val resolvedTitle = metadata.title?.takeIf { it.isNotBlank() }
-            ?: seedVideo?.title.orEmpty()
-        val resolvedAuthor = metadata.author?.takeIf { it.isNotBlank() }
-            ?: seedVideo?.author.orEmpty()
-        val resolvedDuration = seedVideo?.durationMs?.takeIf { it > 0L }
-            ?: metadata.durationMs.coerceAtLeast(0L)
-        val resolvedLive = (seedVideo?.isLive == true) || metadata.isLive
-
-        val resolvedSeed = (seedVideo ?: VoiceAndLinkHelper.buildPlaceholderVideoItem(currentVideoId)).copy(
-            title = resolvedTitle,
-            author = resolvedAuthor,
-            durationMs = resolvedDuration,
-            isLive = resolvedLive
-        )
-
-        return UpNextContextRanker.rank(resolvedSeed, rawList)
+        return rawList
     }
 
     private fun <T> Observable<T>.blockingFirstOrNull(): T? {
