@@ -7,11 +7,11 @@ android {
     buildToolsVersion project.ext.buildToolsVersion
 
     defaultConfig {
-        applicationId "com.cartube.app"
+        applicationId "app.revanced.android.youtube"
         minSdkVersion 21
         targetSdkVersion 33
-        versionCode 9
-        versionName "1.0.8"
+        versionCode 10
+        versionName "1.0.9"
 
         multiDexEnabled true
         vectorDrawables.useSupportLibrary = true
