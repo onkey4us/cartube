@@ -4,9 +4,15 @@
     <color name="car_surface">#FF161A22</color>
     <color name="car_surface_elevated">#FF1F2530</color>
     <color name="car_accent">#FFFF2E4C</color>
+    <color name="car_accent_surface">#FF2A1B22</color>
     <color name="car_accent_dim">#33FF2E4C</color>
     <color name="car_text_primary">#FFF5F7FA</color>
-    <color name="car_text_secondary">#FFA0AAB8</color>
+    <color name="car_text_secondary">#FFC3CBD6</color>
+    <color name="car_text_hint">#FF8C96A6</color>
     <color name="car_divider">#FF262D3B</color>
-    <color name="car_overlay">#AA000000</color>
+    <color name="car_seek_track">#FF3A4252</color>
+    <color name="car_overlay">#73000000</color>
+    <color name="car_scrim_btn">#66000000</color>
+    <color name="car_scrim_play">#33FFFFFF</color>
+    <color name="car_thumb_bg">#FF222222</color>
 </resources>

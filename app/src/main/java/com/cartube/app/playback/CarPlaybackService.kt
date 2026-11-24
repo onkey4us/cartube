@@ -84,15 +84,45 @@ class CarPlaybackService : MediaSessionService() {
     private var lastHistorySyncSec: Long = -1L
     private var errorRetryCount: Int = 0
     private var lastAttemptedVideoId: String? = null
+    private var lastResumeSaveTimeMs: Long = 0L
 
     private val sponsorTickRunnable = object : Runnable {
         override fun run() {
-            if (::exoPlayer.isInitialized && exoPlayer.isPlaying) {
-                checkSponsorSegments()
-                syncHistoryPeriodically()
+            if (::exoPlayer.isInitialized) {
+                val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
+                val dur = exoPlayer.duration.takeIf { it > 0L } ?: 0L
+                val currentState = PlaybackStateStore.state.value
+                if (currentState.currentVideo != null &&
+                    (kotlin.math.abs(currentState.positionMs - pos) >= 1_000L ||
+                        (dur > 0L && currentState.durationMs != dur))
+                ) {
+                    PlaybackStateStore.update {
+                        it.copy(
+                            positionMs = pos,
+                            durationMs = if (dur > 0L) dur else it.durationMs
+                        )
+                    }
+                }
+                if (exoPlayer.isPlaying) {
+                    checkSponsorSegments()
+                    syncHistoryPeriodically()
+                    val now = System.currentTimeMillis()
+                    if (now - lastResumeSaveTimeMs >= 5_000L) {
+                        persistCurrentResumeState()
+                    }
+                }
             }
             mainHandler.postDelayed(this, SPONSOR_CHECK_INTERVAL_MS)
         }
+    }
+
+    private fun persistCurrentResumeState() {
+        if (!::exoPlayer.isInitialized || !::prefs.isInitialized) return
+        val video = PlaybackStateStore.state.value.currentVideo ?: return
+        val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
+        val dur = exoPlayer.duration.takeIf { it > 0L } ?: video.durationMs
+        prefs.saveLastPlayed(video, pos, dur)
+        lastResumeSaveTimeMs = System.currentTimeMillis()
     }
 
     override fun onCreate() {
@@ -100,9 +130,10 @@ class CarPlaybackService : MediaSessionService() {
         instance = this
         prefs = CarPrefs(this)
 
+        val effectiveMaxHeight = effectiveMaxVideoHeight()
         trackSelector = DefaultTrackSelector(this).apply {
             parameters = buildUponParameters()
-                .setMaxVideoSize(1920, prefs.maxVideoHeight)
+                .setMaxVideoSize(1920, effectiveMaxHeight)
                 .setForceHighestSupportedBitrate(false)
                 .build()
         }
@@ -138,6 +169,9 @@ class CarPlaybackService : MediaSessionService() {
         exoPlayer.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 PlaybackStateStore.update { it.copy(isPlaying = isPlaying) }
+                if (!isPlaying) {
+                    persistCurrentResumeState()
+                }
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -228,6 +262,7 @@ class CarPlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        persistCurrentResumeState()
         mainHandler.removeCallbacks(sponsorTickRunnable)
         loadJob?.cancel()
         extrasJob?.cancel()
@@ -250,9 +285,14 @@ class CarPlaybackService : MediaSessionService() {
      * Clears unrelated old Up Next items so Next strictly follows YouTube's related Mix/suggestions
      * for THIS video's genre/artist.
      */
-    fun playVideo(video: VideoItem) {
+    fun playVideo(video: VideoItem, startPositionMs: Long = 0L) {
         upNextQueue.clear()
-        playVideoInternal(video, pushCurrentToHistory = true, resetRetry = true)
+        playVideoInternal(
+            video = video,
+            pushCurrentToHistory = true,
+            resetRetry = true,
+            startPositionMs = startPositionMs
+        )
     }
 
     /**
@@ -278,7 +318,7 @@ class CarPlaybackService : MediaSessionService() {
     fun playVoiceSearch(rawQuery: String) {
         val cleaned = VoiceAndLinkHelper.cleanVoiceQuery(rawQuery)
         PlaybackStateStore.update {
-            it.copy(isLoading = true, statusNotice = "🎙 Đang mở: $cleaned...")
+            it.copy(isLoading = true, statusNotice = "Đang mở: $cleaned...")
         }
         serviceScope.launch {
             runCatching {
@@ -321,7 +361,8 @@ class CarPlaybackService : MediaSessionService() {
     private fun playVideoInternal(
         video: VideoItem,
         pushCurrentToHistory: Boolean,
-        resetRetry: Boolean
+        resetRetry: Boolean,
+        startPositionMs: Long = 0L
     ) {
         nextActionJob?.cancel()
         if (pushCurrentToHistory) {
@@ -346,6 +387,8 @@ class CarPlaybackService : MediaSessionService() {
                 sponsorSegments = emptyList(),
                 isLoading = true,
                 actualVideoHeight = 0,
+                positionMs = startPositionMs.coerceAtLeast(0L),
+                durationMs = video.durationMs,
                 errorMessage = null,
                 statusNotice = if (resetRetry) null else it.statusNotice
             )
@@ -385,13 +428,19 @@ class CarPlaybackService : MediaSessionService() {
                         errorMessage = null
                     )
                 }
+                prefs.saveLastPlayed(enrichedVideo, startPositionMs.coerceAtLeast(0L), enrichedVideo.durationMs)
+                lastResumeSaveTimeMs = System.currentTimeMillis()
 
                 val mediaSource = withContext(Dispatchers.IO) {
                     buildMediaSource(formatInfo)
                 }
 
                 applyTrackPreferences()
-                exoPlayer.setMediaSource(mediaSource)
+                if (startPositionMs > 0L) {
+                    exoPlayer.setMediaSource(mediaSource, startPositionMs)
+                } else {
+                    exoPlayer.setMediaSource(mediaSource)
+                }
                 exoPlayer.prepare()
                 exoPlayer.playWhenReady = true
             } catch (e: Exception) {
@@ -540,8 +589,13 @@ class CarPlaybackService : MediaSessionService() {
         }
     }
 
+    private fun effectiveMaxVideoHeight(): Int {
+        val raw = prefs.maxVideoHeight
+        return if (raw <= 0) 1080 else raw
+    }
+
     private fun applyTrackPreferences() {
-        val maxHeight = prefs.maxVideoHeight
+        val maxHeight = effectiveMaxVideoHeight()
         val maxWidth = when (maxHeight) {
             480 -> 854
             720 -> 1280
@@ -685,7 +739,7 @@ class CarPlaybackService : MediaSessionService() {
         val adaptive = formatInfo.adaptiveFormats?.filter { !it.url.isNullOrBlank() } ?: return null
         if (adaptive.isEmpty()) return null
 
-        val maxH = prefs.maxVideoHeight
+        val maxH = effectiveMaxVideoHeight()
         val videoFormats = adaptive.filter { it.mimeType?.startsWith("video/", ignoreCase = true) == true }
         val audioFormats = adaptive.filter { it.mimeType?.startsWith("audio/", ignoreCase = true) == true }
         if (videoFormats.isEmpty() || audioFormats.isEmpty()) return null

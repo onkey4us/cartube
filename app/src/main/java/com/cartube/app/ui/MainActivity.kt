@@ -6,7 +6,11 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognizerIntent
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
@@ -14,6 +18,7 @@ import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -23,8 +28,10 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.cartube.app.R
+import com.cartube.app.data.CarPrefs
 import com.cartube.app.data.FeedPage
 import com.cartube.app.data.VideoItem
 import com.cartube.app.data.VoiceAndLinkHelper
@@ -51,37 +58,50 @@ class MainActivity : AppCompatActivity() {
     )
 
     private lateinit var binding: ActivityMainBinding
+    private lateinit var prefs: CarPrefs
     private lateinit var videoAdapter: VideoAdapter
     private lateinit var gridLayoutManager: GridLayoutManager
 
     private var currentTab: NavTab = NavTab.HOME
-    private var selectedChipId: String = "home_recommended"
+    private var lastNonSearchTab: NavTab = NavTab.HOME
+    private var selectedChipId: String = "home_all"
     private var currentGroup: MediaGroup? = null
     private var feedJob: Job? = null
     private var isLoadingMore: Boolean = false
+    private var isMiniSeeking: Boolean = false
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var mediaController: MediaController? = null
 
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private val miniProgressRunnable = object : Runnable {
+        override fun run() {
+            updateMiniPlayerProgress()
+            uiHandler.postDelayed(this, 500L)
+        }
+    }
+
     private val homeChips = listOf(
-        CategoryChip("home_recommended", "Đề xuất") { YouTubeRepository.loadHome() },
-        CategoryChip("home_trending", "Thịnh hành") { YouTubeRepository.loadTrending() },
-        CategoryChip("home_vpop", "Nhạc trẻ") { YouTubeRepository.search("Nhạc trẻ V-Pop tuyển chọn mới nhất") },
+        CategoryChip("home_all", "Tất cả") { YouTubeRepository.loadHome() },
+        CategoryChip("home_remix", "Remix") { YouTubeRepository.search("Nhạc Remix Nonstop đi xe hơi hay nhất") },
+        CategoryChip("home_deephouse", "Deep House") { YouTubeRepository.search("Deep House Viet Mix House Lak 2026") },
         CategoryChip("home_bolero", "Bolero") { YouTubeRepository.search("Nhạc vàng Bolero trữ tình chọn lọc") },
-        CategoryChip("home_remix", "Remix / Nonstop") { YouTubeRepository.search("Nhạc trẻ Remix Nonstop đi xe hơi") },
-        CategoryChip("home_chill", "Acoustic / Chill") { YouTubeRepository.search("Nhạc Acoustic Lofi chill nhẹ nhàng") },
+        CategoryChip("home_vpop", "Nhạc Trẻ") { YouTubeRepository.search("Nhạc trẻ V-Pop tuyển chọn mới nhất") },
         CategoryChip("home_podcast", "Podcast") { YouTubeRepository.search("Podcast tiếng Việt hay nhất") },
+        CategoryChip("home_lofi", "Lofi chill") { YouTubeRepository.search("Nhạc Lofi chill Acoustic lái xe") },
+        CategoryChip("home_trending", "Thịnh hành") { YouTubeRepository.loadTrending() },
         CategoryChip("home_news", "Tin tức") { YouTubeRepository.loadNews() },
         CategoryChip("home_live", "Trực tiếp") { YouTubeRepository.loadLive() }
     )
 
     private val musicChips = listOf(
         CategoryChip("music_all", "Tất cả nhạc") { YouTubeRepository.loadMusic() },
-        CategoryChip("music_vpop", "Nhạc trẻ / V-Pop") { YouTubeRepository.search("Nhạc trẻ V-Pop hay nhất hiện nay") },
-        CategoryChip("music_bolero", "Bolero / Trữ tình") { YouTubeRepository.search("Liên khúc Bolero trữ tình hay nhất") },
-        CategoryChip("music_remix", "Remix / Nonstop") { YouTubeRepository.search("Nhạc Remix Nonstop bass căng đi xe") },
-        CategoryChip("music_chill", "Acoustic / Lofi") { YouTubeRepository.search("Acoustic Lofi thư giãn lái xe") },
-        CategoryChip("music_usuk", "Âu Mỹ / US-UK") { YouTubeRepository.search("US UK Pop Hits playlist") },
+        CategoryChip("music_remix", "Remix") { YouTubeRepository.search("Nhạc Remix Nonstop bass căng đi xe") },
+        CategoryChip("music_deephouse", "Deep House") { YouTubeRepository.search("Deep House Chill Viet Mix 2026") },
+        CategoryChip("music_bolero", "Bolero") { YouTubeRepository.search("Liên khúc Bolero trữ tình hay nhất") },
+        CategoryChip("music_vpop", "Nhạc Trẻ") { YouTubeRepository.search("Nhạc trẻ V-Pop hay nhất hiện nay") },
+        CategoryChip("music_lofi", "Lofi chill") { YouTubeRepository.search("Acoustic Lofi thư giãn lái xe") },
+        CategoryChip("music_usuk", "Âu Mỹ") { YouTubeRepository.search("US UK Pop Hits playlist") },
         CategoryChip("music_inst", "Không lời") { YouTubeRepository.search("Nhạc không lời thư giãn nhẹ nhàng") }
     )
 
@@ -90,6 +110,7 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        prefs = CarPrefs(this)
         setupRecyclerView()
         setupNavRail()
         setupSearchBar()
@@ -98,14 +119,18 @@ class MainActivity : AppCompatActivity() {
         observePlaybackState()
 
         if (!handleIncomingVoiceOrLinkIntent(intent, isInitialLaunch = true)) {
-            selectTab(NavTab.HOME)
+            if (!handleRequestedInitialTab(intent)) {
+                selectTab(NavTab.HOME)
+            }
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleIncomingVoiceOrLinkIntent(intent, isInitialLaunch = false)
+        if (!handleIncomingVoiceOrLinkIntent(intent, isInitialLaunch = false)) {
+            handleRequestedInitialTab(intent)
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -118,13 +143,32 @@ class MainActivity : AppCompatActivity() {
         connectMediaSession()
         updateAccountIndicator()
         applyResponsiveLayout()
+        refreshResumeCard()
+        uiHandler.post(miniProgressRunnable)
     }
 
     override fun onStop() {
         super.onStop()
+        uiHandler.removeCallbacks(miniProgressRunnable)
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controllerFuture = null
         mediaController = null
+    }
+
+    private fun handleRequestedInitialTab(intent: Intent?): Boolean {
+        val tabExtra = intent?.getStringExtra(EXTRA_INITIAL_TAB) ?: return false
+        intent.removeExtra(EXTRA_INITIAL_TAB)
+        return when (tabExtra) {
+            TAB_HOME -> {
+                selectTab(NavTab.HOME)
+                true
+            }
+            TAB_SEARCH -> {
+                selectTab(NavTab.SEARCH)
+                true
+            }
+            else -> false
+        }
     }
 
     private fun applyResponsiveLayout() {
@@ -133,34 +177,74 @@ class MainActivity : AppCompatActivity() {
         when (mode) {
             DisplayModeHelper.LayoutMode.PIP_COMPACT -> {
                 binding.leftNavRail.visibility = View.GONE
-                binding.topCompactNavScroll.visibility = View.VISIBLE
-                binding.headerContainer.visibility = if (currentTab == NavTab.SEARCH) View.VISIBLE else View.GONE
+                binding.compactTopBar.visibility = View.VISIBLE
+                binding.topSearchRow.visibility = if (currentTab == NavTab.SEARCH) View.VISIBLE else View.GONE
+                binding.btnVoiceSearch.visibility = View.GONE
+                binding.topSearchRow.setPadding(dpToPx(12), dpToPx(6), dpToPx(12), dpToPx(6))
+                binding.categoryChipScroll.setPadding(dpToPx(12), 0, dpToPx(12), 0)
                 gridLayoutManager.spanCount = 1
-                binding.ivMiniThumb.visibility = View.GONE
+
+                // Compact Mini Player
+                binding.miniPlayerRow.layoutParams = binding.miniPlayerRow.layoutParams.apply {
+                    height = dpToPx(76)
+                }
+                binding.miniPlayerRow.setPadding(dpToPx(12), 0, dpToPx(12), 0)
+                binding.miniThumbFrame.visibility = View.GONE
+                binding.miniSeekContainer.visibility = View.GONE
                 binding.btnMiniPrev.visibility = View.GONE
+                resizeView(binding.btnMiniPlayPause, 56)
+                resizeView(binding.btnMiniNext, 56)
             }
+
             DisplayModeHelper.LayoutMode.PIP_LARGE -> {
                 binding.leftNavRail.visibility = View.VISIBLE
-                binding.leftNavRail.layoutParams = binding.leftNavRail.layoutParams.apply {
-                    width = dpToPx(124)
-                }
-                binding.topCompactNavScroll.visibility = View.GONE
-                binding.headerContainer.visibility = View.VISIBLE
+                binding.compactTopBar.visibility = View.GONE
+                binding.topSearchRow.visibility = View.VISIBLE
+                binding.btnVoiceSearch.visibility = View.VISIBLE
+                binding.topSearchRow.setPadding(dpToPx(16), dpToPx(14), dpToPx(16), dpToPx(8))
+                binding.categoryChipScroll.setPadding(dpToPx(16), 0, dpToPx(16), 0)
                 gridLayoutManager.spanCount = if (widthDp >= 900) 3 else 2
-                binding.ivMiniThumb.visibility = View.VISIBLE
+
+                binding.miniPlayerRow.layoutParams = binding.miniPlayerRow.layoutParams.apply {
+                    height = dpToPx(88)
+                }
+                binding.miniPlayerRow.setPadding(dpToPx(16), 0, dpToPx(16), 0)
+                binding.miniThumbFrame.visibility = View.VISIBLE
+                binding.miniSeekContainer.visibility = if (widthDp >= 820) View.VISIBLE else View.GONE
                 binding.btnMiniPrev.visibility = View.VISIBLE
+                resizeView(binding.btnMiniPrev, 60)
+                resizeView(binding.btnMiniPlayPause, 68)
+                resizeView(binding.btnMiniNext, 60)
             }
+
             DisplayModeHelper.LayoutMode.FULLSCREEN -> {
                 binding.leftNavRail.visibility = View.VISIBLE
-                binding.leftNavRail.layoutParams = binding.leftNavRail.layoutParams.apply {
-                    width = dpToPx(176)
-                }
-                binding.topCompactNavScroll.visibility = View.GONE
-                binding.headerContainer.visibility = View.VISIBLE
+                binding.compactTopBar.visibility = View.GONE
+                binding.topSearchRow.visibility = View.VISIBLE
+                binding.btnVoiceSearch.visibility = View.VISIBLE
+                binding.topSearchRow.setPadding(dpToPx(20), dpToPx(14), dpToPx(20), dpToPx(8))
+                binding.categoryChipScroll.setPadding(dpToPx(20), 0, dpToPx(20), 0)
                 gridLayoutManager.spanCount = 4
-                binding.ivMiniThumb.visibility = View.VISIBLE
+
+                binding.miniPlayerRow.layoutParams = binding.miniPlayerRow.layoutParams.apply {
+                    height = dpToPx(96)
+                }
+                binding.miniPlayerRow.setPadding(dpToPx(20), 0, dpToPx(20), 0)
+                binding.miniThumbFrame.visibility = View.VISIBLE
+                binding.miniSeekContainer.visibility = View.VISIBLE
                 binding.btnMiniPrev.visibility = View.VISIBLE
+                resizeView(binding.btnMiniPrev, 64)
+                resizeView(binding.btnMiniPlayPause, 72)
+                resizeView(binding.btnMiniNext, 64)
             }
+        }
+    }
+
+    private fun resizeView(view: View, sizeDp: Int) {
+        val px = dpToPx(sizeDp)
+        view.layoutParams = view.layoutParams.apply {
+            width = px
+            height = px
         }
     }
 
@@ -184,27 +268,59 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupRecyclerView() {
-        videoAdapter = VideoAdapter { item, _ ->
-            openPlayer(item)
+        videoAdapter = VideoAdapter(
+            onResumeClick = { resumeModel ->
+                handleResumeCardClick(resumeModel)
+            },
+            onVideoClick = { item, _ ->
+                openPlayer(item)
+            }
+        )
+        gridLayoutManager = GridLayoutManager(this, 4).apply {
+            spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+                override fun getSpanSize(position: Int): Int {
+                    return if (videoAdapter.isFullSpanPosition(position)) spanCount else 1
+                }
+            }
         }
-        gridLayoutManager = GridLayoutManager(this, 3)
         binding.rvVideos.layoutManager = gridLayoutManager
         binding.rvVideos.adapter = videoAdapter
-        binding.rvVideos.itemAnimator = null // Zero animation overhead on car head unit
+        binding.rvVideos.itemAnimator = null
 
-        binding.btnLoadMore.setOnClickListener {
-            loadNextPage()
+        // Automatic infinite scroll pagination near the bottom
+        binding.rvVideos.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                if (dy <= 0 || isLoadingMore) return
+                val group = currentGroup ?: return
+                if (group.nextPageKey.isNullOrBlank()) return
+                val totalCount = gridLayoutManager.itemCount
+                val lastVisible = gridLayoutManager.findLastVisibleItemPosition()
+                if (totalCount > 0 && lastVisible >= totalCount - 6) {
+                    loadNextPage()
+                }
+            }
+        })
+    }
+
+    private fun handleResumeCardClick(resumeModel: ResumeUiModel) {
+        val service = CarPlaybackService.instance
+        val activeId = PlaybackStateStore.state.value.currentVideo?.videoId
+        if (service != null && activeId == resumeModel.video.videoId) {
+            val player = service.getPlayer()
+            if (!player.isPlaying) {
+                player.play()
+            }
+            startActivity(Intent(this, PlayerActivity::class.java))
+        } else {
+            openPlayer(resumeModel.video, resumePositionMs = resumeModel.positionMs)
         }
     }
 
     private fun setupNavRail() {
-        // Left rail buttons
         binding.navHome.setOnClickListener { selectTab(NavTab.HOME) }
         binding.navMusic.setOnClickListener { selectTab(NavTab.MUSIC) }
         binding.navSubs.setOnClickListener { selectTab(NavTab.SUBSCRIPTIONS) }
         binding.navHistory.setOnClickListener { selectTab(NavTab.HISTORY) }
-        binding.navSearch.setOnClickListener { selectTab(NavTab.SEARCH) }
-        binding.navVoice.setOnClickListener { launchVoiceRecognizer() }
         binding.navAccount.setOnClickListener {
             startActivity(Intent(this, LoginActivity::class.java))
         }
@@ -212,16 +328,11 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
 
-        // Compact top bar buttons (for 360x712 narrow PiP slot)
+        // Compact 5-icon top bar (Narrow ~360dp mode)
         binding.compactHome.setOnClickListener { selectTab(NavTab.HOME) }
         binding.compactMusic.setOnClickListener { selectTab(NavTab.MUSIC) }
-        binding.compactSubs.setOnClickListener { selectTab(NavTab.SUBSCRIPTIONS) }
-        binding.compactHistory.setOnClickListener { selectTab(NavTab.HISTORY) }
         binding.compactSearch.setOnClickListener { selectTab(NavTab.SEARCH) }
         binding.compactVoice.setOnClickListener { launchVoiceRecognizer() }
-        binding.compactAccount.setOnClickListener {
-            startActivity(Intent(this, LoginActivity::class.java))
-        }
         binding.compactSettings.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
@@ -236,9 +347,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupSearchBar() {
-        binding.btnSearchSubmit.setOnClickListener {
-            performSearch(binding.etSearch.text?.toString().orEmpty())
-        }
         binding.etSearch.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
                 performSearch(binding.etSearch.text?.toString().orEmpty())
@@ -247,8 +355,20 @@ class MainActivity : AppCompatActivity() {
                 false
             }
         }
+        binding.etSearch.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable?) {
+                val hasText = !s.isNullOrEmpty()
+                binding.btnSearchClear.visibility = if (hasText) View.VISIBLE else View.GONE
+            }
+        })
         binding.btnSearchClear.setOnClickListener {
             binding.etSearch.text?.clear()
+            hideKeyboard()
+            if (currentTab == NavTab.SEARCH) {
+                selectTab(lastNonSearchTab)
+            }
         }
         binding.btnVoiceSearch.setOnClickListener {
             launchVoiceRecognizer()
@@ -256,9 +376,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupMiniPlayer() {
-        binding.miniPlayerContainer.setOnClickListener {
+        val openCurrentPlayer = View.OnClickListener {
             startActivity(Intent(this, PlayerActivity::class.java))
         }
+        binding.miniThumbFrame.setOnClickListener(openCurrentPlayer)
+        binding.miniInfoContainer.setOnClickListener(openCurrentPlayer)
+
         binding.btnMiniPrev.setOnClickListener {
             CarPlaybackService.instance?.playPrevious()
         }
@@ -271,6 +394,25 @@ class MainActivity : AppCompatActivity() {
         binding.btnMiniNext.setOnClickListener {
             CarPlaybackService.instance?.playNext()
         }
+
+        binding.miniSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    binding.tvMiniCurrentTime.text = VideoAdapter.formatDuration(progress.toLong())
+                }
+            }
+
+            override fun onStartTrackingTouch(bar: SeekBar?) {
+                isMiniSeeking = true
+            }
+
+            override fun onStopTrackingTouch(bar: SeekBar?) {
+                isMiniSeeking = false
+                bar?.let {
+                    CarPlaybackService.instance?.getPlayer()?.seekTo(it.progress.toLong())
+                }
+            }
+        })
     }
 
     private fun observePlaybackState() {
@@ -283,7 +425,7 @@ class MainActivity : AppCompatActivity() {
                     binding.miniPlayerContainer.visibility = View.VISIBLE
                     binding.tvMiniTitle.text = video.title
                     binding.tvMiniAuthor.text = if (state.isAudioOnly) {
-                        "${video.author} • Đang phát âm thanh nền"
+                        "${video.author} · Chỉ tiếng"
                     } else {
                         video.author
                     }
@@ -293,19 +435,72 @@ class MainActivity : AppCompatActivity() {
                     Glide.with(binding.ivMiniThumb)
                         .load(video.thumbnailUrl)
                         .centerCrop()
+                        .placeholder(R.drawable.bg_thumb_placeholder)
                         .into(binding.ivMiniThumb)
                 }
+                refreshResumeCard()
             }
+        }
+    }
+
+    private fun updateMiniPlayerProgress() {
+        if (isMiniSeeking) return
+        val player = CarPlaybackService.instance?.getPlayer() ?: return
+        val duration = player.duration.coerceAtLeast(0L)
+        val position = player.currentPosition.coerceAtLeast(0L)
+        if (duration > 0L) {
+            binding.miniSeekBar.max = duration.toInt()
+            binding.miniSeekBar.progress = position.toInt()
+            binding.tvMiniCurrentTime.text = VideoAdapter.formatDuration(position)
+            binding.tvMiniTotalTime.text = VideoAdapter.formatDuration(duration)
+        }
+    }
+
+    private fun refreshResumeCard() {
+        if (currentTab != NavTab.HOME) {
+            videoAdapter.setResumeItem(null)
+            return
+        }
+        val state = PlaybackStateStore.state.value
+        val activeVideo = state.currentVideo
+        if (activeVideo != null) {
+            val player = CarPlaybackService.instance?.getPlayer()
+            val posMs = player?.currentPosition?.coerceAtLeast(0L) ?: state.positionMs
+            val durMs = player?.duration?.takeIf { it > 0L }
+                ?: state.durationMs.takeIf { it > 0L }
+                ?: activeVideo.durationMs
+            videoAdapter.setResumeItem(
+                ResumeUiModel(
+                    video = activeVideo,
+                    positionMs = posMs,
+                    durationMs = durMs,
+                    isPlaying = state.isPlaying
+                )
+            )
+            return
+        }
+
+        val saved = prefs.getLastPlayed()
+        if (saved != null) {
+            videoAdapter.setResumeItem(
+                ResumeUiModel(
+                    video = saved.video,
+                    positionMs = saved.positionMs,
+                    durationMs = saved.durationMs,
+                    isPlaying = false
+                )
+            )
+        } else {
+            videoAdapter.setResumeItem(null)
         }
     }
 
     private fun updateAccountIndicator() {
         val account = YouTubeRepository.getSelectedAccount()
-        binding.tvAccountLabel.text = if (account != null && !account.name.isNullOrBlank()) {
-            account.name
-        } else {
-            getString(R.string.nav_account)
-        }
+        val isSignedIn = account != null
+        binding.viewAccountSignedDot.visibility = if (isSignedIn) View.VISIBLE else View.GONE
+        binding.navAccount.contentDescription = account?.name?.takeIf { it.isNotBlank() }
+            ?: getString(R.string.nav_account)
     }
 
     private fun renderCategoryChipsForTab(tab: NavTab) {
@@ -327,18 +522,18 @@ class MainActivity : AppCompatActivity() {
         binding.categoryChipScroll.visibility = View.VISIBLE
         binding.categoryChipGroup.removeAllViews()
 
-        val heightPx = dpToPx(38)
-        val padH = dpToPx(14)
-        val marginEnd = dpToPx(8)
-        val textColor = ContextCompat.getColor(this, R.color.car_text_primary)
+        val heightPx = dpToPx(48)
+        val padH = dpToPx(20)
+        val marginEnd = dpToPx(10)
+        val textColors = ContextCompat.getColorStateList(this, R.color.chip_text_color)
 
         for (chip in chips) {
             val tv = TextView(this).apply {
                 text = chip.label
-                textSize = 14f
-                setTextColor(textColor)
+                textSize = 16f
+                setTextColor(textColors)
                 gravity = Gravity.CENTER
-                setBackgroundResource(R.drawable.bg_nav_item)
+                setBackgroundResource(R.drawable.bg_pill_chip)
                 setPadding(padH, 0, padH, 0)
                 isSelected = chip.id == selectedChipId
                 layoutParams = LinearLayout.LayoutParams(
@@ -372,6 +567,9 @@ class MainActivity : AppCompatActivity() {
     private fun selectTab(tab: NavTab) {
         val tabChanged = currentTab != tab
         currentTab = tab
+        if (tab != NavTab.SEARCH) {
+            lastNonSearchTab = tab
+        }
         if (tabChanged) {
             selectedChipId = when (tab) {
                 NavTab.HOME -> homeChips.first().id
@@ -384,41 +582,27 @@ class MainActivity : AppCompatActivity() {
             NavTab.HOME to binding.navHome,
             NavTab.MUSIC to binding.navMusic,
             NavTab.SUBSCRIPTIONS to binding.navSubs,
-            NavTab.HISTORY to binding.navHistory,
-            NavTab.SEARCH to binding.navSearch
+            NavTab.HISTORY to binding.navHistory
         )
         railMap.forEach { (key, view) -> view.isSelected = key == tab }
 
         val compactMap = mapOf(
             NavTab.HOME to binding.compactHome,
             NavTab.MUSIC to binding.compactMusic,
-            NavTab.SUBSCRIPTIONS to binding.compactSubs,
-            NavTab.HISTORY to binding.compactHistory,
             NavTab.SEARCH to binding.compactSearch
         )
         compactMap.forEach { (key, view) -> view.isSelected = key == tab }
 
         renderCategoryChipsForTab(tab)
+        refreshResumeCard()
 
-        binding.searchBarContainer.visibility = if (tab == NavTab.SEARCH) View.VISIBLE else View.GONE
         if (DisplayModeHelper.getLayoutMode(this) == DisplayModeHelper.LayoutMode.PIP_COMPACT) {
-            binding.headerContainer.visibility = if (tab == NavTab.SEARCH) View.VISIBLE else View.GONE
-            binding.tvHeaderTitle.visibility = View.GONE
-        } else {
-            binding.headerContainer.visibility = View.VISIBLE
-            binding.tvHeaderTitle.visibility = View.VISIBLE
-        }
-        binding.tvHeaderTitle.text = when (tab) {
-            NavTab.HOME -> getString(R.string.nav_home)
-            NavTab.MUSIC -> getString(R.string.nav_music)
-            NavTab.SUBSCRIPTIONS -> getString(R.string.nav_subscriptions)
-            NavTab.HISTORY -> getString(R.string.nav_history)
-            NavTab.SEARCH -> getString(R.string.nav_search)
+            binding.topSearchRow.visibility = if (tab == NavTab.SEARCH) View.VISIBLE else View.GONE
         }
 
         if (tab == NavTab.SEARCH) {
             binding.etSearch.requestFocus()
-            if (videoAdapter.itemCount == 0) {
+            if (videoAdapter.getVideoCount() == 0) {
                 binding.tvEmptyState.visibility = View.VISIBLE
                 binding.tvEmptyState.text = getString(R.string.search_prompt)
             }
@@ -431,10 +615,11 @@ class MainActivity : AppCompatActivity() {
     private fun loadCurrentTab() {
         feedJob?.cancel()
         currentGroup = null
+        isLoadingMore = false
+        videoAdapter.setShowLoadingFooter(false)
         binding.progressBar.visibility = View.VISIBLE
         binding.errorContainer.visibility = View.GONE
         binding.tvEmptyState.visibility = View.GONE
-        binding.btnLoadMore.visibility = View.GONE
 
         feedJob = lifecycleScope.launch {
             try {
@@ -471,7 +656,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleIncomingVoiceOrLinkIntent(incoming: Intent?, isInitialLaunch: Boolean): Boolean {
         val target = VoiceAndLinkHelper.parseIntent(incoming) ?: return false
-        // Clear intent payload so rotation / config changes never re-trigger the same voice action
         incoming?.action = null
         incoming?.data = null
 
@@ -485,7 +669,7 @@ class MainActivity : AppCompatActivity() {
             is VoiceOrLinkTarget.SearchAndPlay -> {
                 selectTab(NavTab.SEARCH)
                 binding.etSearch.setText(target.query)
-                Toast.makeText(this, "🎙 Đang mở: ${target.query}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Đang mở: ${target.query}", Toast.LENGTH_SHORT).show()
                 performSearch(target.query, autoPlayFirst = true)
             }
         }
@@ -517,7 +701,7 @@ class MainActivity : AppCompatActivity() {
                 val cleaned = VoiceAndLinkHelper.cleanVoiceQuery(raw)
                 selectTab(NavTab.SEARCH)
                 binding.etSearch.setText(cleaned)
-                Toast.makeText(this, "🎙 Đang mở: $cleaned", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Đang mở: $cleaned", Toast.LENGTH_SHORT).show()
                 performSearch(cleaned, autoPlayFirst = true)
             }
         }
@@ -529,13 +713,26 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.search_prompt, Toast.LENGTH_SHORT).show()
             return
         }
+        if (currentTab != NavTab.SEARCH) {
+            currentTab = NavTab.SEARCH
+            binding.navHome.isSelected = false
+            binding.navMusic.isSelected = false
+            binding.navSubs.isSelected = false
+            binding.navHistory.isSelected = false
+            binding.compactHome.isSelected = false
+            binding.compactMusic.isSelected = false
+            binding.compactSearch.isSelected = true
+            renderCategoryChipsForTab(NavTab.SEARCH)
+            refreshResumeCard()
+        }
         hideKeyboard()
         feedJob?.cancel()
         currentGroup = null
+        isLoadingMore = false
+        videoAdapter.setShowLoadingFooter(false)
         binding.progressBar.visibility = View.VISIBLE
         binding.errorContainer.visibility = View.GONE
         binding.tvEmptyState.visibility = View.GONE
-        binding.btnLoadMore.visibility = View.GONE
 
         feedJob = lifecycleScope.launch {
             try {
@@ -556,16 +753,14 @@ class MainActivity : AppCompatActivity() {
         binding.progressBar.visibility = View.GONE
         currentGroup = page.sourceGroup
         videoAdapter.submitList(page.items)
+        refreshResumeCard()
         binding.rvVideos.scrollToPosition(0)
 
-        if (page.items.isEmpty()) {
+        if (page.items.isEmpty() && videoAdapter.itemCount == 0) {
             binding.tvEmptyState.visibility = View.VISIBLE
             binding.tvEmptyState.text = getString(R.string.empty_feed)
-            binding.btnLoadMore.visibility = View.GONE
         } else {
             binding.tvEmptyState.visibility = View.GONE
-            binding.btnLoadMore.visibility =
-                if (!page.sourceGroup?.nextPageKey.isNullOrBlank()) View.VISIBLE else View.GONE
         }
     }
 
@@ -573,22 +768,18 @@ class MainActivity : AppCompatActivity() {
         val group = currentGroup ?: return
         if (isLoadingMore) return
         isLoadingMore = true
-        binding.btnLoadMore.isEnabled = false
-        binding.btnLoadMore.text = getString(R.string.loading)
+        videoAdapter.setShowLoadingFooter(true)
 
         lifecycleScope.launch {
             try {
                 val nextPage = YouTubeRepository.loadMore(group)
                 currentGroup = nextPage.sourceGroup
                 videoAdapter.appendItems(nextPage.items)
-                binding.btnLoadMore.visibility =
-                    if (!nextPage.sourceGroup?.nextPageKey.isNullOrBlank()) View.VISIBLE else View.GONE
             } catch (_: Exception) {
                 Toast.makeText(this@MainActivity, R.string.error_load_more, Toast.LENGTH_SHORT).show()
             } finally {
                 isLoadingMore = false
-                binding.btnLoadMore.isEnabled = true
-                binding.btnLoadMore.text = getString(R.string.load_more)
+                videoAdapter.setShowLoadingFooter(false)
             }
         }
     }
@@ -599,9 +790,12 @@ class MainActivity : AppCompatActivity() {
         binding.tvError.text = msg
     }
 
-    private fun openPlayer(video: VideoItem) {
+    private fun openPlayer(video: VideoItem, resumePositionMs: Long = 0L) {
         val intent = Intent(this, PlayerActivity::class.java).apply {
             putExtra(PlayerActivity.EXTRA_VIDEO, video)
+            if (resumePositionMs > 0L) {
+                putExtra(PlayerActivity.EXTRA_RESUME_POSITION_MS, resumePositionMs)
+            }
         }
         startActivity(intent)
     }
@@ -636,5 +830,8 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val REQ_VOICE_SEARCH = 2001
+        const val EXTRA_INITIAL_TAB = "extra_initial_tab"
+        const val TAB_HOME = "home"
+        const val TAB_SEARCH = "search"
     }
 }
