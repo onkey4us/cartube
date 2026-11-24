@@ -107,6 +107,7 @@ object YouTubeRepository {
 
     suspend fun loadPlaybackExtras(
         videoId: String,
+        seedVideo: VideoItem? = null,
         loadSponsorSegments: Boolean
     ): PlaybackExtras = withContext(Dispatchers.IO) {
         coroutineScope {
@@ -120,7 +121,7 @@ object YouTubeRepository {
                 }.getOrDefault(emptyList())
             }
             val metadata = metaDeferred.await()
-            val related = buildRelatedList(metadata, currentVideoId = videoId)
+            val related = buildRelatedList(metadata, currentVideoId = videoId, seedVideo = seedVideo)
             val segments = sponsorDeferred.await()
             PlaybackExtras(
                 metadata = metadata,
@@ -242,24 +243,54 @@ object YouTubeRepository {
         return result
     }
 
-    private fun buildRelatedList(metadata: MediaItemMetadata?, currentVideoId: String): List<VideoItem> {
+    private fun buildRelatedList(
+        metadata: MediaItemMetadata?,
+        currentVideoId: String,
+        seedVideo: VideoItem?
+    ): List<VideoItem> {
         if (metadata == null) return emptyList()
         val seen = HashSet<String>()
         seen.add(currentVideoId)
-        val list = ArrayList<VideoItem>()
-        metadata.nextVideo?.let { VideoItem.from(it, allowShorts = false) }?.let {
-            if (seen.add(it.videoId)) list.add(it)
-        }
-        for (group in metadata.suggestions.orEmpty()) {
-            if (group.type == MediaGroup.TYPE_SHORTS) continue
-            for (raw in group.mediaItems.orEmpty()) {
-                val video = VideoItem.from(raw, allowShorts = false) ?: continue
-                if (seen.add(video.videoId)) {
-                    list.add(video)
+        val rawList = ArrayList<VideoItem>()
+
+        metadata.nextVideo
+            ?.let { VideoItem.from(it, allowShorts = false, allowUpcoming = false, shelfIndex = 0) }
+            ?.let {
+                if (seen.add(it.videoId)) rawList.add(it)
+            }
+
+        metadata.suggestions.orEmpty().forEachIndexed { groupIdx, group ->
+            if (group.type != MediaGroup.TYPE_SHORTS) {
+                for (raw in group.mediaItems.orEmpty()) {
+                    val video = VideoItem.from(
+                        item = raw,
+                        allowShorts = false,
+                        allowUpcoming = false,
+                        shelfIndex = groupIdx
+                    ) ?: continue
+                    if (seen.add(video.videoId)) {
+                        rawList.add(video)
+                    }
                 }
             }
         }
-        return list
+
+        val resolvedTitle = metadata.title?.takeIf { it.isNotBlank() }
+            ?: seedVideo?.title.orEmpty()
+        val resolvedAuthor = metadata.author?.takeIf { it.isNotBlank() }
+            ?: seedVideo?.author.orEmpty()
+        val resolvedDuration = seedVideo?.durationMs?.takeIf { it > 0L }
+            ?: metadata.durationMs.coerceAtLeast(0L)
+        val resolvedLive = (seedVideo?.isLive == true) || metadata.isLive
+
+        val resolvedSeed = (seedVideo ?: VoiceAndLinkHelper.buildPlaceholderVideoItem(currentVideoId)).copy(
+            title = resolvedTitle,
+            author = resolvedAuthor,
+            durationMs = resolvedDuration,
+            isLive = resolvedLive
+        )
+
+        return UpNextContextRanker.rank(resolvedSeed, rawList)
     }
 
     private fun <T> Observable<T>.blockingFirstOrNull(): T? {

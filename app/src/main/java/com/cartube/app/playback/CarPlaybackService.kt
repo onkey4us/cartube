@@ -33,6 +33,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.cartube.app.data.CarPrefs
 import com.cartube.app.data.ClientSourceHelper
+import com.cartube.app.data.UpNextContextRanker
 import com.cartube.app.data.VideoItem
 import com.cartube.app.data.VoiceAndLinkHelper
 import com.cartube.app.data.VoiceOrLinkTarget
@@ -420,9 +421,17 @@ class CarPlaybackService : MediaSessionService() {
                     clickTrackingParams = video.clickTrackingParams
                 )
 
+                val formatDurationMs = formatInfo.lengthSeconds
+                    ?.toLongOrNull()
+                    ?.takeIf { it > 0L }
+                    ?.times(1000L)
+                    ?: 0L
+
                 val enrichedVideo = video.copy(
                     title = formatInfo.title?.takeIf { it.isNotBlank() } ?: video.title,
-                    author = formatInfo.author?.takeIf { it.isNotBlank() } ?: video.author
+                    author = formatInfo.author?.takeIf { it.isNotBlank() } ?: video.author,
+                    durationMs = video.durationMs.takeIf { it > 0L } ?: formatDurationMs,
+                    isLive = video.isLive || formatInfo.isLive
                 )
 
                 // Live streams and nearly-finished videos start cleanly from the beginning
@@ -472,18 +481,32 @@ class CarPlaybackService : MediaSessionService() {
         // 2. Fetch YouTube's related Up Next suggestions & SponsorBlock segments asynchronously in background
         extrasJob = serviceScope.launch {
             runCatching {
+                val latestSeed = PlaybackStateStore.state.value.currentVideo
+                    ?.takeIf { it.videoId == video.videoId }
+                    ?: video
                 YouTubeRepository.loadPlaybackExtras(
                     videoId = video.videoId,
+                    seedVideo = latestSeed,
                     loadSponsorSegments = prefs.sponsorBlockEnabled
                 )
             }.onSuccess { extras ->
-                if (PlaybackStateStore.state.value.currentVideo?.videoId != video.videoId) {
+                val currentActive = PlaybackStateStore.state.value.currentVideo
+                if (currentActive?.videoId != video.videoId) {
                     return@onSuccess
                 }
+                val meta = extras.metadata
+                val resolvedSeed = currentActive.copy(
+                    title = meta?.title?.takeIf { it.isNotBlank() } ?: currentActive.title,
+                    author = meta?.author?.takeIf { it.isNotBlank() } ?: currentActive.author,
+                    durationMs = currentActive.durationMs.takeIf { it > 0L }
+                        ?: (meta?.durationMs?.coerceAtLeast(0L) ?: 0L),
+                    isLive = currentActive.isLive || (meta?.isLive == true)
+                )
                 activeSegments = extras.sponsorSegments
-                updateUpNextFromRelated(video.videoId, extras.relatedVideos)
+                updateUpNextFromRelated(resolvedSeed, extras.relatedVideos)
                 PlaybackStateStore.update {
                     it.copy(
+                        currentVideo = resolvedSeed,
                         upNextVideos = upNextQueue.toList(),
                         isLoadingUpNext = false,
                         sponsorSegments = extras.sponsorSegments
@@ -497,8 +520,9 @@ class CarPlaybackService : MediaSessionService() {
         }
     }
 
-    private fun updateUpNextFromRelated(currentVideoId: String, freshRelated: List<VideoItem>) {
+    private fun updateUpNextFromRelated(seedVideo: VideoItem, freshRelated: List<VideoItem>) {
         if (freshRelated.isEmpty()) return
+        val currentVideoId = seedVideo.videoId
 
         // Prefer related videos not yet played in this session so Next never loops A <-> B
         val unseenFresh = freshRelated.filter {
@@ -524,8 +548,9 @@ class CarPlaybackService : MediaSessionService() {
             }
         }
 
+        val ranked = UpNextContextRanker.rank(seedVideo, merged)
         upNextQueue.clear()
-        upNextQueue.addAll(merged.take(25))
+        upNextQueue.addAll(ranked.take(25))
     }
 
     fun playNext() {
@@ -545,9 +570,13 @@ class CarPlaybackService : MediaSessionService() {
             extrasJob?.join()
             if (upNextQueue.isEmpty()) {
                 runCatching {
-                    YouTubeRepository.loadPlaybackExtras(current.videoId, loadSponsorSegments = false)
+                    YouTubeRepository.loadPlaybackExtras(
+                        videoId = current.videoId,
+                        seedVideo = current,
+                        loadSponsorSegments = false
+                    )
                 }.onSuccess { extras ->
-                    updateUpNextFromRelated(current.videoId, extras.relatedVideos)
+                    updateUpNextFromRelated(current, extras.relatedVideos)
                 }
             }
             if (upNextQueue.isNotEmpty()) {
