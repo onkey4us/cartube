@@ -16,7 +16,11 @@ class UpNextAdapter(
 ) : RecyclerView.Adapter<UpNextAdapter.UpNextViewHolder>() {
 
     private val items = ArrayList<VideoItem>()
-    private var thumbWidthDp: Int = 132
+    private var thumbWidthDp: Int = 128
+    private var rowHeightDp: Int = 84
+    private var highlightFirst: Boolean = true
+    private var titleTextSizeSp: Float = 15f
+    private var subtitleTextSizeSp: Float = 13f
 
     fun submitList(newItems: List<VideoItem>) {
         items.clear()
@@ -24,9 +28,26 @@ class UpNextAdapter(
         notifyDataSetChanged()
     }
 
-    fun setThumbnailWidthDp(widthDp: Int) {
-        if (thumbWidthDp == widthDp) return
-        thumbWidthDp = widthDp
+    fun configureStyle(
+        thumbWidthDp: Int,
+        rowHeightDp: Int,
+        highlightFirst: Boolean,
+        titleTextSizeSp: Float = 15f,
+        subtitleTextSizeSp: Float = 13f
+    ) {
+        if (this.thumbWidthDp == thumbWidthDp &&
+            this.rowHeightDp == rowHeightDp &&
+            this.highlightFirst == highlightFirst &&
+            this.titleTextSizeSp == titleTextSizeSp &&
+            this.subtitleTextSizeSp == subtitleTextSizeSp
+        ) {
+            return
+        }
+        this.thumbWidthDp = thumbWidthDp
+        this.rowHeightDp = rowHeightDp
+        this.highlightFirst = highlightFirst
+        this.titleTextSizeSp = titleTextSizeSp
+        this.subtitleTextSizeSp = subtitleTextSizeSp
         notifyDataSetChanged()
     }
 
@@ -57,15 +78,26 @@ class UpNextAdapter(
                 metrics
             ).toInt()
             val hPx = (wPx * 9) / 16
+            val rowPx = TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP,
+                rowHeightDp.toFloat(),
+                metrics
+            ).toInt()
+
+            binding.upNextRowRoot.layoutParams = binding.upNextRowRoot.layoutParams.apply {
+                height = rowPx
+            }
+            binding.upNextRowRoot.isSelected = highlightFirst && position == 0
+
             binding.thumbContainer.layoutParams = binding.thumbContainer.layoutParams.apply {
                 width = wPx
                 height = hPx
             }
 
             binding.tvTitle.text = item.title
+            binding.tvTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, titleTextSizeSp)
+            binding.tvSubtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleTextSizeSp)
             binding.tvSubtitle.text = when {
-                item.author.isNotBlank() && item.subtitle.isNotBlank() && !item.subtitle.startsWith(item.author) ->
-                    "${item.author} • ${item.subtitle}"
                 item.author.isNotBlank() -> item.author
                 else -> item.subtitle
             }

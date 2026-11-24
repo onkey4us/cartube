@@ -27,15 +27,17 @@ class SettingsActivity : AppCompatActivity() {
 
         when (prefs.maxVideoHeight) {
             480 -> binding.rb480p.isChecked = true
+            720 -> binding.rb720p.isChecked = true
             1080 -> binding.rb1080p.isChecked = true
-            else -> binding.rb720p.isChecked = true
+            else -> binding.rbAuto.isChecked = true
         }
 
         binding.rgQuality.setOnCheckedChangeListener { _, checkedId ->
             val height = when (checkedId) {
                 binding.rb480p.id -> 480
+                binding.rb720p.id -> 720
                 binding.rb1080p.id -> 1080
-                else -> 720
+                else -> 0
             }
             prefs.maxVideoHeight = height
             CarPlaybackService.instance?.updateMaxVideoHeight(height)

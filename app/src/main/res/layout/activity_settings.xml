@@ -59,10 +59,19 @@
                 android:orientation="horizontal">
 
                 <RadioButton
+                    android:id="@+id/rbAuto"
+                    android:layout_width="wrap_content"
+                    android:layout_height="56dp"
+                    android:layout_marginEnd="20dp"
+                    android:text="Tự động"
+                    android:textColor="@color/car_text_primary"
+                    android:textSize="16sp" />
+
+                <RadioButton
                     android:id="@+id/rb480p"
                     android:layout_width="wrap_content"
-                    android:layout_height="48dp"
-                    android:layout_marginEnd="24dp"
+                    android:layout_height="56dp"
+                    android:layout_marginEnd="20dp"
                     android:text="480p (Tiết kiệm 4G)"
                     android:textColor="@color/car_text_primary"
                     android:textSize="16sp" />
@@ -70,16 +79,16 @@
                 <RadioButton
                     android:id="@+id/rb720p"
                     android:layout_width="wrap_content"
-                    android:layout_height="48dp"
-                    android:layout_marginEnd="24dp"
-                    android:text="720p (Nhẹ nhất - Khuyên dùng)"
+                    android:layout_height="56dp"
+                    android:layout_marginEnd="20dp"
+                    android:text="720p (Nhẹ nhất)"
                     android:textColor="@color/car_text_primary"
                     android:textSize="16sp" />
 
                 <RadioButton
                     android:id="@+id/rb1080p"
                     android:layout_width="wrap_content"
-                    android:layout_height="48dp"
+                    android:layout_height="56dp"
                     android:text="1080p (Full HD)"
                     android:textColor="@color/car_text_primary"
                     android:textSize="16sp" />
