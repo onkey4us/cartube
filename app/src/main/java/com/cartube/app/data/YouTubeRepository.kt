@@ -1,5 +1,7 @@
 package com.cartube.app.data
 
+import android.util.Log
+import com.liskovsoft.mediaserviceinterfaces.data.MediaItem
 import com.liskovsoft.mediaserviceinterfaces.data.MediaGroup
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItemFormatInfo
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItemMetadata
@@ -53,6 +55,7 @@ object YouTubeRepository {
 
     suspend fun loadHome(): FeedPage = withContext(Dispatchers.IO) {
         val groups = serviceManager.contentService.homeObserve.blockingFirstOrNull().orEmpty()
+        logShelves("HOME", groups)
         flattenGroups(groups)
     }
 
@@ -64,6 +67,7 @@ object YouTubeRepository {
 
     suspend fun loadMusic(): FeedPage = withContext(Dispatchers.IO) {
         val groups = serviceManager.contentService.musicObserve.blockingFirstOrNull().orEmpty()
+        logShelves("MUSIC", groups)
         flattenGroups(groups)
     }
 
@@ -158,7 +162,18 @@ object YouTubeRepository {
                     serviceManager.mediaItemService.getSponsorSegments(videoId, sponsorCategories).orEmpty()
                 }.getOrDefault(emptyList())
             }
+            // DIAGNOSTIC ONLY: what YouTube's own Mix (radio) for this video would play.
+            val mixDeferred = async {
+                runCatching {
+                    serviceManager.mediaItemService.getMetadata(videoId, "RD$videoId", 0, null)
+                }.getOrNull()
+            }
             val metadata = metaDeferred.await()
+            Log.i(RECS_TAG, "NEXT seed=$videoId \"${metadata?.title}\" autoplay=${metadata?.nextVideo?.let { describe(it) }}")
+            logShelves("NEXT", metadata?.suggestions.orEmpty())
+            val mix = mixDeferred.await()
+            Log.i(RECS_TAG, "MIX seed=$videoId autoplay=${mix?.nextVideo?.let { describe(it) }} playlist=${mix?.playlistInfo?.title}")
+            logShelves("MIX", mix?.suggestions.orEmpty())
             val related = buildRelatedList(metadata, currentVideoId = videoId)
             val segments = sponsorDeferred.await()
             PlaybackExtras(
@@ -246,6 +261,22 @@ object YouTubeRepository {
             if (!disposable.isDisposed) {
                 disposable.dispose()
             }
+        }
+    }
+
+    private const val RECS_TAG = "CarTubeRecs"
+
+    private fun describe(item: MediaItem): String {
+        val who = item.author?.takeIf { it.isNotBlank() } ?: item.secondTitle?.toString().orEmpty()
+        return "${item.title} | $who | ${item.durationMs / 1000}s | id=${item.videoId} pl=${item.playlistId}"
+    }
+
+    private fun logShelves(label: String, groups: List<MediaGroup>) {
+        Log.i(RECS_TAG, "$label shelves=${groups.size}")
+        groups.forEachIndexed { index, group ->
+            val items = group.mediaItems.orEmpty()
+            Log.i(RECS_TAG, "$label shelf[$index] type=${group.type} title=\"${group.title}\" items=${items.size}")
+            items.take(12).forEach { Log.i(RECS_TAG, "$label   [$index] ${describe(it)}") }
         }
     }
 

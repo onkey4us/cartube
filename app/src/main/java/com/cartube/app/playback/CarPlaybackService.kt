@@ -713,6 +713,10 @@ class CarPlaybackService : MediaSessionService() {
         val ranked = UpNextContextRanker.rank(seedVideo, merged, buildSessionSignals())
         upNextQueue.clear()
         upNextQueue.addAll(ranked.take(25))
+        Log.i("CarTubeRecs", "QUEUE seed=${seedVideo.videoId} \"${seedVideo.title}\" size=${upNextQueue.size}")
+        upNextQueue.take(15).forEachIndexed { i, v ->
+            Log.i("CarTubeRecs", "QUEUE   ${i + 1}. ${v.title} | ${v.author} | ${v.durationMs / 1000}s | shelf=${v.shelfIndex} id=${v.videoId}")
+        }
     }
 
     private fun buildSessionSignals(): SessionSignals {
