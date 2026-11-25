@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -48,9 +49,11 @@ import com.liskovsoft.mediaserviceinterfaces.data.SponsorSegment
 import com.liskovsoft.sharedutils.cronet.CronetManager
 import com.liskovsoft.youtubeapi.service.YouTubeServiceManager
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -104,6 +107,15 @@ class CarPlaybackService : MediaSessionService() {
     // User-chosen "Chỉ tiếng" mode; survives PlayerActivity recreation (unlike temporary background video-off)
     private var userForcedAudioOnly: Boolean = false
 
+    // Stream info of the next Up Next video, resolved shortly before the current one ends so the
+    // track change does not wait on a /player round trip.
+    private var prefetchVideoId: String? = null
+    private var prefetchDuringVideoId: String? = null
+    private var prefetchStartedAtMs: Long = 0L
+    private var prefetchDeferred: Deferred<MediaItemFormatInfo?>? = null
+
+    private val healthLogger = PlaybackHealthLogger()
+
     private val sponsorTickRunnable = object : Runnable {
         override fun run() {
             if (::exoPlayer.isInitialized) {
@@ -125,6 +137,7 @@ class CarPlaybackService : MediaSessionService() {
                     trackListening(dur)
                     checkSponsorSegments()
                     syncHistoryPeriodically()
+                    maybePrefetchNext(pos, dur)
                     val now = System.currentTimeMillis()
                     if (now - lastResumeSaveTimeMs >= 5_000L) {
                         persistCurrentResumeState()
@@ -160,19 +173,24 @@ class CarPlaybackService : MediaSessionService() {
                 .build()
         }
 
-        // Start bandwidth estimate at 6 Mbps so ABR starts sharp (720p/1080p) and smoothly adapts on 4G without stuttering
+        // Start the bandwidth estimate at 3 Mbps: enough for 720p H.264 on a normal 4G hotspot, without
+        // betting on a fast link and stalling in the first seconds when the hotspot is weak
         val bandwidthMeter = DefaultBandwidthMeter.Builder(this)
-            .setInitialBitrateEstimate(6_000_000L)
+            .setInitialBitrateEstimate(3_000_000L)
             .build()
 
-        // Fast 1s playback start + generous 60s buffer ceiling to absorb mobile hotspot fluctuations
+        // Fast 1s start, then keep 60-120s ahead so tunnels / 4G dead zones play through. After a stall
+        // wait for 5s of media, otherwise a weak link stalls again every couple of seconds.
+        // 20s stay behind the playhead so the 10s rewind is instant. Memory is capped at 80 MB.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                20_000, // minBufferMs
-                60_000, // maxBufferMs
-                1_000,  // bufferForPlaybackMs (fast start)
-                2_000   // bufferForPlaybackAfterRebufferMs
+                60_000,  // minBufferMs
+                120_000, // maxBufferMs
+                1_000,   // bufferForPlaybackMs (fast start)
+                5_000    // bufferForPlaybackAfterRebufferMs
             )
+            .setBackBuffer(20_000, true)
+            .setTargetBufferBytes(MAX_BUFFER_BYTES)
             .build()
 
         val audioAttributes = AudioAttributes.Builder()
@@ -187,6 +205,8 @@ class CarPlaybackService : MediaSessionService() {
             .setAudioAttributes(audioAttributes, true) // Auto handle car AudioFocus (navi/reverse)
             .setHandleAudioBecomingNoisy(true)
             .build()
+
+        exoPlayer.addAnalyticsListener(healthLogger)
 
         exoPlayer.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -291,6 +311,7 @@ class CarPlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        healthLogger.logSummary()
         persistCurrentResumeState()
         mainHandler.removeCallbacks(sponsorTickRunnable)
         loadJob?.cancel()
@@ -398,6 +419,7 @@ class CarPlaybackService : MediaSessionService() {
         startPositionMs: Long = 0L
     ) {
         nextActionJob?.cancel()
+        healthLogger.onNewVideo(video.videoId)
         var effectiveStartMs = if (video.isLive) 0L else startPositionMs.coerceAtLeast(0L)
         // A retry of the same video (client switch after an error) keeps its listening progress.
         if (PlaybackStateStore.state.value.currentVideo?.videoId != video.videoId) {
@@ -455,10 +477,11 @@ class CarPlaybackService : MediaSessionService() {
         // 1. Fetch stream URLs ONLY and start playback immediately (never block on SponsorBlock or /next!)
         loadJob = serviceScope.launch {
             try {
-                val formatInfo = YouTubeRepository.loadFormatInfo(
-                    videoId = video.videoId,
-                    clickTrackingParams = video.clickTrackingParams
-                )
+                val formatInfo = takePrefetchedFormat(video.videoId)
+                    ?: YouTubeRepository.loadFormatInfo(
+                        videoId = video.videoId,
+                        clickTrackingParams = video.clickTrackingParams
+                    )
 
                 val formatDurationMs = formatInfo.lengthSeconds
                     ?.toLongOrNull()
@@ -999,8 +1022,59 @@ class CarPlaybackService : MediaSessionService() {
         }
     }
 
+    /**
+     * In the last seconds of a video, resolves the streams of the first Up Next item so the track
+     * change can start buffering at once. Only the stream info is fetched (a few KB), no media.
+     */
+    private fun maybePrefetchNext(positionMs: Long, durationMs: Long) {
+        if (durationMs <= 0L || durationMs - positionMs > PREFETCH_BEFORE_END_MS) return
+        val current = PlaybackStateStore.state.value.currentVideo ?: return
+        if (current.isLive) return
+        val next = upNextQueue.firstOrNull() ?: return
+        // One try per candidate, also when it failed: the normal load path handles that video.
+        if (prefetchVideoId == next.videoId) return
+
+        prefetchVideoId = next.videoId
+        prefetchDuringVideoId = current.videoId
+        prefetchStartedAtMs = SystemClock.elapsedRealtime()
+        val positionSec = positionMs / 1000f
+        prefetchDeferred = serviceScope.async {
+            runCatching {
+                // MediaServiceCore caches a single format info and the prefetch replaces it, so do
+                // the last history sync of the current video first (see syncHistoryPeriodically).
+                if (positionSec >= 10f) {
+                    YouTubeRepository.updateHistoryPosition(current.videoId, positionSec)
+                }
+                YouTubeRepository.prefetchFormatInfo(next.videoId, next.clickTrackingParams)
+            }.getOrNull().also {
+                Log.i(TAG, "Prefetched next video ${next.videoId}: ${if (it != null) "ready" else "not usable"}")
+            }
+        }
+    }
+
+    /** Hands over the prefetched stream info for [videoId] once; null when there is none usable. */
+    private suspend fun takePrefetchedFormat(videoId: String): MediaItemFormatInfo? {
+        if (prefetchVideoId != videoId) return null
+        val deferred = prefetchDeferred
+        val ageMs = SystemClock.elapsedRealtime() - prefetchStartedAtMs
+        prefetchVideoId = null
+        prefetchDuringVideoId = null
+        prefetchDeferred = null
+        // Stream URLs expire; a prefetch left over from a long pause is not worth the risk.
+        if (deferred == null || ageMs > PREFETCH_MAX_AGE_MS) return null
+        return deferred.await()?.takeIf { it.isCacheActual && YouTubeRepository.isPlayableByMedia3(it) }
+    }
+
     private fun syncHistoryPeriodically() {
         val video = PlaybackStateStore.state.value.currentVideo ?: return
+        // The prefetch of the next video already did this video's last sync; syncing again now
+        // would make MediaServiceCore re-fetch this video's player response.
+        val durationMs = exoPlayer.duration
+        if (prefetchDuringVideoId == video.videoId &&
+            durationMs > 0L && durationMs - exoPlayer.currentPosition <= PREFETCH_BEFORE_END_MS
+        ) {
+            return
+        }
         val sec = exoPlayer.currentPosition / 1000L
         if (sec < 10L) return
         if (lastHistorySyncVideoId == video.videoId && kotlin.math.abs(sec - lastHistorySyncSec) < 30L) {
@@ -1079,6 +1153,11 @@ class CarPlaybackService : MediaSessionService() {
         private const val MIN_LISTEN_FOR_SKIP_SIGNAL_MS = 2_000L
         private const val RECENT_PLAYED_FOR_RANKING = 15
         private const val MAX_RELATED_HITS_MEMORY = 1_500
+
+        // Buffering / next-track prefetch
+        private const val MAX_BUFFER_BYTES = 80 * 1024 * 1024
+        private const val PREFETCH_BEFORE_END_MS = 30_000L
+        private const val PREFETCH_MAX_AGE_MS = 30 * 60_000L
 
         @Volatile
         var instance: CarPlaybackService? = null

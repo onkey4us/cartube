@@ -106,6 +106,20 @@ object YouTubeRepository {
     }
 
     /**
+     * Resolves the streams of a video that is about to play. One attempt only: unlike
+     * [loadFormatInfo] it never switches the InnerTube client, so it cannot disturb the video
+     * that is playing right now. Returns null when the result is not usable.
+     */
+    suspend fun prefetchFormatInfo(
+        videoId: String,
+        clickTrackingParams: String?
+    ): MediaItemFormatInfo? = withContext(Dispatchers.IO) {
+        runCatching {
+            serviceManager.mediaItemService.getFormatInfo(videoId, clickTrackingParams)
+        }.getOrNull()?.takeIf { isPlayableByMedia3(it) }
+    }
+
+    /**
      * [PlaybackExtras.relatedVideos] is returned in YouTube's own order; the playback service ranks
      * it once, together with what it knows about the listening session.
      */
