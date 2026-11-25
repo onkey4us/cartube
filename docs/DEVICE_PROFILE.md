@@ -124,8 +124,16 @@ Không có decoder AV1 nào trên máy.
     đo/bố cục 3,4 ms trên main thread
   - ExoPlayer không tính đây là rớt khung hình, nên log `DROPPED` không thấy
   Ở chế độ toàn màn hình app dùng `SurfaceView`, video đi thẳng ra bộ tổng hợp hình và không qua đường này.
-  Hướng sửa cần thử trên xe: dùng `SurfaceView` cả trong khung nhúng (chưa rõ vì sao commit `ca07278` chọn
-  `TextureView`; góc bo tròn của khung video sẽ mất vì `SurfaceView` không cắt theo viền được).
+  **Đã sửa ở commit `2751512` và đo lại trên xe (2026-11-25, bản thử cài qua adb):**
+  - `SurfaceView` hiển thị đúng vị trí và đúng hình trong khung nhúng 1082x712 (đã chụp màn hình kiểm tra)
+  - số khung hình giao diện app phải vẽ giảm từ khoảng 21-24 xuống 2 mỗi giây (chỉ còn thanh tiến trình)
+  - lớp video hiện 23,1 fps cho video 24 fps (`dumpsys SurfaceFlinger --latency`), `droppedFrames=0`
+  - CPU theo luồng đo trong cửa sổ 10 giây: main thread 8,8%, `ExoPlayer:Playback` 17,9%, cả app 41% trên 500%.
+    Con số 31-37% ở trên lấy từ ảnh chụp tức thời của `top`, vốn dao động mạnh; cách đo ổn định hơn
+    (`schedstat`, 5 giây) cho bản cũ khoảng 13%
+  - còn lại: trong 5,5 giây có 12 khung hình bị trễ 80 ms rồi bù bằng khung 20 ms. Giả thuyết chưa kiểm chứng:
+    màn hình ảo của launcher khai báo 60 Hz trong khi màn hình thật là 50 Hz, nên ExoPlayer canh thời điểm
+    nhả khung hình theo sai nhịp vsync.
 - **Khởi động bài chậm:** trong log, từ lúc dựng xong nguồn DASH đến lúc decoder khởi tạo mất khoảng 5 giây
   (16:00:44,5 đến 16:00:49,5). Mới có một mẫu, cần đo thêm.
 - **Lỗi giả khi đổi bài nhanh (đã sửa trong code, chưa build):** log có
