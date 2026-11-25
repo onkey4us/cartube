@@ -93,6 +93,11 @@ class CarPlaybackService : MediaSessionService() {
     private var currentListenedMs: Long = 0L
     private var pendingRelatedSeed: VideoItem? = null
     private var pendingRelated: List<VideoItem>? = null
+    private var pendingMix: List<VideoItem>? = null
+
+    // True while the queue is YouTube's own Mix (radio): it is then played in YouTube's order and
+    // kept across songs, like the Mix on YouTube, instead of being rebuilt by our ranker.
+    private var queueFromMix: Boolean = false
     private val skippedAuthors = HashMap<String, Int>()
     private val relatedHits = LinkedHashMap<String, Int>()
     private val relatedHitsCountedFor = HashSet<String>()
@@ -425,6 +430,7 @@ class CarPlaybackService : MediaSessionService() {
         upNextQueue.clear()
         queueSeed = null
         queueSourceRaw = emptyList()
+        queueFromMix = false
         playVideoInternal(
             video = video,
             pushCurrentToHistory = true,
@@ -519,6 +525,7 @@ class CarPlaybackService : MediaSessionService() {
             currentAccepted = chosenByUser
             pendingRelatedSeed = null
             pendingRelated = null
+            pendingMix = null
         } else if (chosenByUser) {
             currentAccepted = true
         }
@@ -659,6 +666,7 @@ class CarPlaybackService : MediaSessionService() {
                 activeSegments = extras.sponsorSegments
                 pendingRelatedSeed = resolvedSeed
                 pendingRelated = extras.relatedVideos
+                pendingMix = extras.mixVideos
                 // Not accepted yet: hold these suggestions back and keep the current queue,
                 // unless there is nothing else to offer.
                 if (currentAccepted || upNextQueue.isEmpty()) {
@@ -758,9 +766,11 @@ class CarPlaybackService : MediaSessionService() {
     private fun adoptPendingRelated(): Boolean {
         val seed = pendingRelatedSeed ?: return false
         val related = pendingRelated ?: return false
+        val mix = pendingMix.orEmpty()
         pendingRelatedSeed = null
         pendingRelated = null
-        if (related.isEmpty()) return false
+        pendingMix = null
+        if (related.isEmpty() && mix.isEmpty()) return false
         if (currentAccepted && relatedHitsCountedFor.add(seed.videoId)) {
             for (item in related) {
                 relatedHits[item.videoId] = (relatedHits[item.videoId] ?: 0) + 1
@@ -771,8 +781,62 @@ class CarPlaybackService : MediaSessionService() {
                 oldest.forEach { relatedHits.remove(it) }
             }
         }
-        updateUpNextFromRelated(seed, related)
+        rebuildUpNext(seed, mix, related)
         return true
+    }
+
+    /** Chooses where the queue comes from: YouTube's Mix when the video has one, else related videos. */
+    private fun rebuildUpNext(seed: VideoItem, mix: List<VideoItem>, related: List<VideoItem>) {
+        when {
+            mix.size >= MIN_MIX_QUEUE -> updateUpNextFromMix(seed, mix)
+            // No Mix for this one, but the Mix we are in still has songs: stay in it.
+            queueFromMix && upNextQueue.size >= MIX_REFILL_BELOW -> Unit
+            else -> {
+                queueFromMix = false
+                updateUpNextFromRelated(seed, related)
+            }
+        }
+        Log.i("CarTubeRecs", "QUEUE seed=${seed.videoId} \"${seed.title}\" fromMix=$queueFromMix size=${upNextQueue.size}")
+        upNextQueue.take(12).forEachIndexed { i, v ->
+            Log.i("CarTubeRecs", "QUEUE   ${i + 1}. ${v.title} | ${v.author} | ${v.durationMs / 1000}s")
+        }
+    }
+
+    /**
+     * YouTube's Mix, in YouTube's order. A Mix already playing is kept (like on YouTube, where the
+     * same Mix continues song after song) and only topped up when it runs low.
+     */
+    private fun updateUpNextFromMix(seed: VideoItem, mix: List<VideoItem>) {
+        val others = mix.filter { it.videoId != seed.videoId }
+        val usable = others.filter { it.videoId !in playedIdsInSession }.ifEmpty { others }
+        if (usable.isEmpty()) return
+
+        if (!queueFromMix || upNextQueue.isEmpty()) {
+            upNextQueue.clear()
+            upNextQueue.addAll(usable)
+        } else if (upNextQueue.size < MIX_REFILL_BELOW) {
+            val queuedIds = upNextQueue.mapTo(HashSet()) { it.videoId }
+            for (item in usable) {
+                if (upNextQueue.size >= MAX_MIX_QUEUE) break
+                if (queuedIds.add(item.videoId)) upNextQueue.add(item)
+            }
+        }
+        queueFromMix = true
+        queueSeed = seed
+        queueSourceRaw = upNextQueue.toList()
+        demoteSkippedAuthorsInMixQueue()
+    }
+
+    /** The only reordering done to a Mix: channels the listener skipped early go to the end. */
+    private fun demoteSkippedAuthorsInMixQueue() {
+        if (skippedAuthors.isEmpty() || upNextQueue.size <= 1) return
+        val (kept, demoted) = upNextQueue.partition {
+            UpNextContextRanker.normalizeAuthor(it.author) !in skippedAuthors
+        }
+        if (kept.isEmpty() || demoted.isEmpty()) return
+        upNextQueue.clear()
+        upNextQueue.addAll(kept)
+        upNextQueue.addAll(demoted)
     }
 
     /**
@@ -799,6 +863,10 @@ class CarPlaybackService : MediaSessionService() {
     }
 
     private fun rerankQueueAfterSkip() {
+        if (queueFromMix) {
+            demoteSkippedAuthorsInMixQueue()
+            return
+        }
         val seed = queueSeed ?: return
         if (upNextQueue.size <= 1) return
         val queuedIds = upNextQueue.mapTo(HashSet()) { it.videoId }
@@ -841,7 +909,7 @@ class CarPlaybackService : MediaSessionService() {
                         loadSponsorSegments = false
                     )
                 }.onSuccess { extras ->
-                    updateUpNextFromRelated(current, extras.relatedVideos)
+                    rebuildUpNext(current, extras.mixVideos, extras.relatedVideos)
                 }
             }
             if (upNextQueue.isNotEmpty()) {
@@ -1266,6 +1334,11 @@ class CarPlaybackService : MediaSessionService() {
         private const val MIN_LISTEN_FOR_SKIP_SIGNAL_MS = 2_000L
         private const val RECENT_PLAYED_FOR_RANKING = 15
         private const val MAX_RELATED_HITS_MEMORY = 1_500
+
+        // YouTube Mix as the Up Next queue
+        private const val MIN_MIX_QUEUE = 5
+        private const val MIX_REFILL_BELOW = 6
+        private const val MAX_MIX_QUEUE = 40
 
         // Buffering / next-track prefetch
         private const val MAX_BUFFER_BYTES = 80 * 1024 * 1024

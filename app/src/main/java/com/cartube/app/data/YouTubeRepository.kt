@@ -1,5 +1,6 @@
 package com.cartube.app.data
 
+import android.util.Log
 import com.liskovsoft.mediaserviceinterfaces.data.MediaGroup
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItemFormatInfo
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItemMetadata
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.TimeUnit
 
 data class FeedPage(
     val items: List<VideoItem>,
@@ -26,6 +28,8 @@ data class FeedPage(
 
 data class PlaybackExtras(
     val metadata: MediaItemMetadata?,
+    /** YouTube's Mix (radio) for this video, in YouTube's order; empty when it has none. */
+    val mixVideos: List<VideoItem>,
     val relatedVideos: List<VideoItem>,
     val sponsorSegments: List<SponsorSegment>
 )
@@ -52,8 +56,7 @@ object YouTubeRepository {
     )
 
     suspend fun loadHome(): FeedPage = withContext(Dispatchers.IO) {
-        val groups = serviceManager.contentService.homeObserve.blockingFirstOrNull().orEmpty()
-        flattenGroups(groups)
+        flattenGroups(serviceManager.contentService.homeObserve.blockingBatches())
     }
 
     suspend fun loadTrending(): FeedPage = withContext(Dispatchers.IO) {
@@ -63,8 +66,8 @@ object YouTubeRepository {
     }
 
     suspend fun loadMusic(): FeedPage = withContext(Dispatchers.IO) {
-        val groups = serviceManager.contentService.musicObserve.blockingFirstOrNull().orEmpty()
-        flattenGroups(groups)
+        // The first batch is only the "liked music" row; the music page itself comes after it.
+        flattenGroups(serviceManager.contentService.musicObserve.blockingBatches())
     }
 
     suspend fun loadNews(): FeedPage = withContext(Dispatchers.IO) {
@@ -150,7 +153,12 @@ object YouTubeRepository {
     ): PlaybackExtras = withContext(Dispatchers.IO) {
         coroutineScope {
             val metaDeferred = async {
-                runCatching { serviceManager.mediaItemService.getMetadata(videoId) }.getOrNull()
+                // Asking for the video inside its Mix playlist returns the Mix AND the usual
+                // suggestions in one request. Videos without a Mix fall back to the plain request.
+                runCatching {
+                    serviceManager.mediaItemService.getMetadata(videoId, mixPlaylistId(videoId), 0, null)
+                }.getOrNull()?.takeIf { !it.suggestions.isNullOrEmpty() }
+                    ?: runCatching { serviceManager.mediaItemService.getMetadata(videoId) }.getOrNull()
             }
             val sponsorDeferred = async {
                 if (!loadSponsorSegments) emptyList()
@@ -159,10 +167,14 @@ object YouTubeRepository {
                 }.getOrDefault(emptyList())
             }
             val metadata = metaDeferred.await()
-            val related = buildRelatedList(metadata, currentVideoId = videoId)
+            val mixShelf = findMixShelf(metadata, videoId)
+            val mix = extractItems(mixShelf).filter { it.videoId != videoId }
+            val related = buildRelatedList(metadata, currentVideoId = videoId, skipShelf = mixShelf)
+            Log.i(RECS_TAG, "EXTRAS seed=$videoId mix=${mix.size} related=${related.size}")
             val segments = sponsorDeferred.await()
             PlaybackExtras(
                 metadata = metadata,
+                mixVideos = mix,
                 relatedVideos = related,
                 sponsorSegments = segments
             )
@@ -281,9 +293,25 @@ object YouTubeRepository {
         return result
     }
 
+    private const val RECS_TAG = "CarTubeRecs"
+    private const val MIN_MIX_ITEMS = 5
+    private const val MAX_FEED_BATCHES = 4L
+    private const val FEED_BATCH_WINDOW_SEC = 10L
+
+    private fun mixPlaylistId(videoId: String) = "RD$videoId"
+
+    /** The shelf that holds this video's Mix: its items all belong to the playlist "RD<videoId>". */
+    private fun findMixShelf(metadata: MediaItemMetadata?, videoId: String): MediaGroup? {
+        val mixId = mixPlaylistId(videoId)
+        return metadata?.suggestions.orEmpty().firstOrNull { group ->
+            group.mediaItems.orEmpty().count { it.playlistId == mixId } >= MIN_MIX_ITEMS
+        }
+    }
+
     private fun buildRelatedList(
         metadata: MediaItemMetadata?,
-        currentVideoId: String
+        currentVideoId: String,
+        skipShelf: MediaGroup? = null
     ): List<VideoItem> {
         if (metadata == null) return emptyList()
         val seen = HashSet<String>()
@@ -293,11 +321,11 @@ object YouTubeRepository {
         metadata.nextVideo
             ?.let { VideoItem.from(it, allowShorts = false, allowUpcoming = false, shelfIndex = 0) }
             ?.let {
-                if (seen.add(it.videoId)) rawList.add(it)
+                if (seen.add(it.videoId)) rawList.add(it.copy(isAutoplayPick = true))
             }
 
         metadata.suggestions.orEmpty().forEachIndexed { groupIdx, group ->
-            if (group.type != MediaGroup.TYPE_SHORTS) {
+            if (group !== skipShelf && group.type != MediaGroup.TYPE_SHORTS) {
                 for (raw in group.mediaItems.orEmpty()) {
                     val video = VideoItem.from(
                         item = raw,
@@ -307,12 +335,33 @@ object YouTubeRepository {
                     ) ?: continue
                     if (seen.add(video.videoId)) {
                         rawList.add(video)
+                    } else if (video.durationMs > 0L) {
+                        // The autoplay pick comes without a duration; take it from its shelf copy.
+                        val first = rawList.firstOrNull()
+                        if (first != null && first.videoId == video.videoId && first.durationMs <= 0L) {
+                            rawList[0] = video.copy(isAutoplayPick = true)
+                        }
                     }
                 }
             }
         }
 
         return rawList
+    }
+
+    /**
+     * YouTube sends a feed page in several batches of shelves. Collect the first few instead of
+     * only the first one, without waiting forever on a slow link.
+     */
+    private fun Observable<List<MediaGroup>>.blockingBatches(): List<MediaGroup> {
+        return runCatching {
+            this.take(MAX_FEED_BATCHES)
+                .take(FEED_BATCH_WINDOW_SEC, TimeUnit.SECONDS)
+                .onErrorReturnItem(emptyList())
+                .toList()
+                .blockingGet()
+                .flatten()
+        }.getOrDefault(emptyList())
     }
 
     private fun <T> Observable<T>.blockingFirstOrNull(): T? {

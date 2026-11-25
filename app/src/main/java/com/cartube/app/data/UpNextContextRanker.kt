@@ -259,10 +259,12 @@ object UpNextContextRanker {
         val candIsLive = isLiveItem(cand)
         val candText = "${cand.title} ${cand.author} ${cand.subtitle}"
 
-        // Base relevance from YouTube's own WatchNext ordering + primary shelf bonus
+        // Base relevance from YouTube's own WatchNext ordering. The rows of that grid are not
+        // ordered by relevance (measured on the car: row 0 is just three unrelated videos), so the
+        // row index earns nothing; YouTube's explicit autoplay choice does.
         var score = (40.0 - youtubeRank * 1.15).coerceAtLeast(4.0)
-        if (cand.shelfIndex == 0) {
-            score += 12.0
+        if (cand.isAutoplayPick) {
+            score += 20.0
         }
 
         // Listener signals: a channel skipped early sinks, and a candidate that several
@@ -292,7 +294,12 @@ object UpNextContextRanker {
         }
 
         // Disguised live / radio streams with 0:00 unknown duration when playing VOD
-        val candDurationMs = cand.durationMs
+        // The autoplay pick often arrives without a duration; it is not a disguised live stream.
+        val candDurationMs = when {
+            cand.durationMs > 0L -> cand.durationMs
+            cand.isAutoplayPick -> seedDurationMs.takeIf { it > 0L } ?: 270_000L
+            else -> 0L
+        }
         if (candDurationMs <= 0L) {
             return ScoredCandidate(
                 item = cand,

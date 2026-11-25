@@ -14,7 +14,9 @@ data class VideoItem(
     val isLive: Boolean,
     val clickTrackingParams: String?,
     val isMusicType: Boolean = false,
-    val shelfIndex: Int = 0
+    val shelfIndex: Int = 0,
+    /** The video YouTube itself would autoplay after the current one. */
+    val isAutoplayPick: Boolean = false
 ) : Serializable {
     companion object {
         fun from(
