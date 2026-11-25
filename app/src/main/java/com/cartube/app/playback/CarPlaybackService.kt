@@ -44,6 +44,7 @@ import com.cartube.app.ui.PlayerActivity
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.liskovsoft.mediaserviceinterfaces.data.MediaFormat
+import com.liskovsoft.mediaserviceinterfaces.data.MediaGroup
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItemFormatInfo
 import com.liskovsoft.mediaserviceinterfaces.data.SponsorSegment
 import com.liskovsoft.sharedutils.cronet.CronetManager
@@ -98,6 +99,12 @@ class CarPlaybackService : MediaSessionService() {
     // True while the queue is YouTube's own Mix (radio): it is then played in YouTube's order and
     // kept across songs, like the Mix on YouTube, instead of being rebuilt by our ranker.
     private var queueFromMix: Boolean = false
+
+    // Loading more Up Next items when the listener scrolls to the end of the list
+    private var pendingMixGroup: MediaGroup? = null
+    private var mixGroup: MediaGroup? = null
+    private var loadMoreUpNextJob: Job? = null
+    private var upNextExhausted: Boolean = false
     private val skippedAuthors = HashMap<String, Int>()
     private val relatedHits = LinkedHashMap<String, Int>()
     private val relatedHitsCountedFor = HashSet<String>()
@@ -431,6 +438,7 @@ class CarPlaybackService : MediaSessionService() {
         queueSeed = null
         queueSourceRaw = emptyList()
         queueFromMix = false
+        mixGroup = null
         playVideoInternal(
             video = video,
             pushCurrentToHistory = true,
@@ -441,11 +449,13 @@ class CarPlaybackService : MediaSessionService() {
     }
 
     /**
-     * Plays an item chosen from the Up Next drawer while preserving remaining fallback suggestions
-     * until the newly selected video's own related suggestions arrive.
+     * Plays an item chosen from the Up Next list. Picking a song by hand makes it the new source:
+     * the list is rebuilt from that song's own Mix as soon as it arrives (the old list stays
+     * visible until then). Next / autoplay, by contrast, keep the Mix that is running.
      */
     fun playFromUpNext(video: VideoItem) {
         upNextQueue.removeAll { it.videoId == video.videoId }
+        queueFromMix = false
         playVideoInternal(video, pushCurrentToHistory = true, resetRetry = true, chosenByUser = true)
     }
 
@@ -526,6 +536,8 @@ class CarPlaybackService : MediaSessionService() {
             pendingRelatedSeed = null
             pendingRelated = null
             pendingMix = null
+            pendingMixGroup = null
+            upNextExhausted = false
         } else if (chosenByUser) {
             currentAccepted = true
         }
@@ -667,6 +679,7 @@ class CarPlaybackService : MediaSessionService() {
                 pendingRelatedSeed = resolvedSeed
                 pendingRelated = extras.relatedVideos
                 pendingMix = extras.mixVideos
+                pendingMixGroup = extras.mixGroup
                 // Not accepted yet: hold these suggestions back and keep the current queue,
                 // unless there is nothing else to offer.
                 if (currentAccepted || upNextQueue.isEmpty()) {
@@ -767,9 +780,11 @@ class CarPlaybackService : MediaSessionService() {
         val seed = pendingRelatedSeed ?: return false
         val related = pendingRelated ?: return false
         val mix = pendingMix.orEmpty()
+        val group = pendingMixGroup
         pendingRelatedSeed = null
         pendingRelated = null
         pendingMix = null
+        pendingMixGroup = null
         if (related.isEmpty() && mix.isEmpty()) return false
         if (currentAccepted && relatedHitsCountedFor.add(seed.videoId)) {
             for (item in related) {
@@ -781,18 +796,25 @@ class CarPlaybackService : MediaSessionService() {
                 oldest.forEach { relatedHits.remove(it) }
             }
         }
-        rebuildUpNext(seed, mix, related)
+        rebuildUpNext(seed, mix, related, group)
         return true
     }
 
     /** Chooses where the queue comes from: YouTube's Mix when the video has one, else related videos. */
-    private fun rebuildUpNext(seed: VideoItem, mix: List<VideoItem>, related: List<VideoItem>) {
+    private fun rebuildUpNext(
+        seed: VideoItem,
+        mix: List<VideoItem>,
+        related: List<VideoItem>,
+        group: MediaGroup? = null
+    ) {
         when {
-            mix.size >= MIN_MIX_QUEUE -> updateUpNextFromMix(seed, mix)
+            mix.size >= MIN_MIX_QUEUE -> updateUpNextFromMix(seed, mix, group)
             // No Mix for this one, but the Mix we are in still has songs: stay in it.
             queueFromMix && upNextQueue.size >= MIX_REFILL_BELOW -> Unit
             else -> {
                 queueFromMix = false
+                mixGroup = null
+                upNextExhausted = false
                 updateUpNextFromRelated(seed, related)
             }
         }
@@ -806,7 +828,7 @@ class CarPlaybackService : MediaSessionService() {
      * YouTube's Mix, in YouTube's order. A Mix already playing is kept (like on YouTube, where the
      * same Mix continues song after song) and only topped up when it runs low.
      */
-    private fun updateUpNextFromMix(seed: VideoItem, mix: List<VideoItem>) {
+    private fun updateUpNextFromMix(seed: VideoItem, mix: List<VideoItem>, group: MediaGroup?) {
         val others = mix.filter { it.videoId != seed.videoId }
         val usable = others.filter { it.videoId !in playedIdsInSession }.ifEmpty { others }
         if (usable.isEmpty()) return
@@ -814,17 +836,60 @@ class CarPlaybackService : MediaSessionService() {
         if (!queueFromMix || upNextQueue.isEmpty()) {
             upNextQueue.clear()
             upNextQueue.addAll(usable)
+            mixGroup = group
+            upNextExhausted = false
         } else if (upNextQueue.size < MIX_REFILL_BELOW) {
             val queuedIds = upNextQueue.mapTo(HashSet()) { it.videoId }
             for (item in usable) {
                 if (upNextQueue.size >= MAX_MIX_QUEUE) break
                 if (queuedIds.add(item.videoId)) upNextQueue.add(item)
             }
+            mixGroup = group
+            upNextExhausted = false
         }
         queueFromMix = true
         queueSeed = seed
         queueSourceRaw = upNextQueue.toList()
         demoteSkippedAuthorsInMixQueue()
+    }
+
+    /**
+     * Called when the listener scrolls to the end of the Up Next list: appends more songs, first
+     * from the next page of the current Mix, then from the Mix of the last song listed.
+     */
+    fun loadMoreUpNext() {
+        if (loadMoreUpNextJob?.isActive == true || upNextExhausted) return
+        if (upNextQueue.size >= MAX_UP_NEXT_BROWSE) return
+        val current = PlaybackStateStore.state.value.currentVideo ?: return
+        val group = mixGroup
+        val fallbackId = upNextQueue.lastOrNull()?.videoId ?: current.videoId
+        loadMoreUpNextJob = serviceScope.launch {
+            val page = runCatching { YouTubeRepository.loadMoreMix(group, fallbackId) }.getOrNull()
+                ?: return@launch
+            // The list was rebuilt for another video while this was loading.
+            if (PlaybackStateStore.state.value.currentVideo?.videoId != current.videoId) return@launch
+
+            val known = upNextQueue.mapTo(HashSet()) { it.videoId }
+            known.add(current.videoId)
+            var added = 0
+            for (item in page.items) {
+                if (upNextQueue.size >= MAX_UP_NEXT_BROWSE) break
+                if (item.videoId !in playedIdsInSession && known.add(item.videoId)) {
+                    upNextQueue.add(item)
+                    added++
+                }
+            }
+            when {
+                added > 0 -> mixGroup = page.group
+                // This Mix has nothing new left: next time continue from the last song's own Mix.
+                group != null -> mixGroup = null
+                else -> upNextExhausted = true
+            }
+            Log.i("CarTubeRecs", "MORE added=$added size=${upNextQueue.size} from=${if (group != null) "mix page" else "mix of $fallbackId"}")
+            if (added > 0) {
+                PlaybackStateStore.update { it.copy(upNextVideos = upNextQueue.toList()) }
+            }
+        }
     }
 
     /** The only reordering done to a Mix: channels the listener skipped early go to the end. */
@@ -909,7 +974,7 @@ class CarPlaybackService : MediaSessionService() {
                         loadSponsorSegments = false
                     )
                 }.onSuccess { extras ->
-                    rebuildUpNext(current, extras.mixVideos, extras.relatedVideos)
+                    rebuildUpNext(current, extras.mixVideos, extras.relatedVideos, extras.mixGroup)
                 }
             }
             if (upNextQueue.isNotEmpty()) {
@@ -1339,6 +1404,7 @@ class CarPlaybackService : MediaSessionService() {
         private const val MIN_MIX_QUEUE = 5
         private const val MIX_REFILL_BELOW = 6
         private const val MAX_MIX_QUEUE = 40
+        private const val MAX_UP_NEXT_BROWSE = 200
 
         // Buffering / next-track prefetch
         private const val MAX_BUFFER_BYTES = 80 * 1024 * 1024

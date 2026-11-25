@@ -23,6 +23,9 @@ class UpNextAdapter(
     private var subtitleTextSizeSp: Float = 13f
 
     fun submitList(newItems: List<VideoItem>) {
+        // The playback state is re-emitted every second; only redraw when the list really changed,
+        // otherwise the rows rebind under the listener's finger while scrolling.
+        if (items == newItems) return
         items.clear()
         items.addAll(newItems)
         notifyDataSetChanged()

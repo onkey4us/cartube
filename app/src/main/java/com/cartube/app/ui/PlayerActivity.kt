@@ -27,6 +27,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.cartube.app.R
 import com.cartube.app.data.CarPrefs
 import com.cartube.app.data.VideoItem
@@ -580,6 +581,18 @@ class PlayerActivity : AppCompatActivity() {
         binding.rvUpNext.layoutManager = LinearLayoutManager(this)
         binding.rvUpNext.adapter = upNextAdapter
         binding.rvUpNext.itemAnimator = null
+
+        // Endless list: ask for more songs when the listener gets close to the end
+        binding.rvUpNext.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                if (dx <= 0 && dy <= 0) return
+                val layoutManager = recyclerView.layoutManager as? LinearLayoutManager ?: return
+                val total = layoutManager.itemCount
+                if (total > 0 && layoutManager.findLastVisibleItemPosition() >= total - 4) {
+                    CarPlaybackService.instance?.loadMoreUpNext()
+                }
+            }
+        })
     }
 
     private fun setupTouchGestures() {

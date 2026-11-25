@@ -30,8 +30,16 @@ data class PlaybackExtras(
     val metadata: MediaItemMetadata?,
     /** YouTube's Mix (radio) for this video, in YouTube's order; empty when it has none. */
     val mixVideos: List<VideoItem>,
+    /** The Mix shelf itself, kept so more of it can be loaded later. */
+    val mixGroup: MediaGroup?,
     val relatedVideos: List<VideoItem>,
     val sponsorSegments: List<SponsorSegment>
+)
+
+/** More Up Next items, and the shelf to continue from next time. */
+data class MixPage(
+    val items: List<VideoItem>,
+    val group: MediaGroup?
 )
 
 sealed class SignInState {
@@ -175,10 +183,34 @@ object YouTubeRepository {
             PlaybackExtras(
                 metadata = metadata,
                 mixVideos = mix,
+                mixGroup = mixShelf,
                 relatedVideos = related,
                 sponsorSegments = segments
             )
         }
+    }
+
+    /**
+     * More songs for the Up Next list: the next page of the Mix shelf when YouTube offers one,
+     * otherwise the Mix of [fallbackVideoId] (the last song already listed), so the list can go
+     * on for as long as the listener keeps scrolling.
+     */
+    suspend fun loadMoreMix(group: MediaGroup?, fallbackVideoId: String?): MixPage = withContext(Dispatchers.IO) {
+        if (group != null && !group.nextPageKey.isNullOrBlank()) {
+            val next = runCatching { serviceManager.contentService.continueGroup(group) }.getOrNull()
+            val items = extractItems(next)
+            if (items.isNotEmpty()) {
+                return@withContext MixPage(items, next)
+            }
+        }
+        if (fallbackVideoId.isNullOrBlank()) {
+            return@withContext MixPage(emptyList(), null)
+        }
+        val metadata = runCatching {
+            serviceManager.mediaItemService.getMetadata(fallbackVideoId, mixPlaylistId(fallbackVideoId), 0, null)
+        }.getOrNull()
+        val shelf = findMixShelf(metadata, fallbackVideoId)
+        MixPage(extractItems(shelf).filter { it.videoId != fallbackVideoId }, shelf)
     }
 
     private fun fetchFormatWithFallback(
