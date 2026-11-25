@@ -48,6 +48,7 @@ import com.liskovsoft.mediaserviceinterfaces.data.MediaItemFormatInfo
 import com.liskovsoft.mediaserviceinterfaces.data.SponsorSegment
 import com.liskovsoft.sharedutils.cronet.CronetManager
 import com.liskovsoft.youtubeapi.service.YouTubeServiceManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -620,6 +621,10 @@ class CarPlaybackService : MediaSessionService() {
                 }
                 exoPlayer.prepare()
                 exoPlayer.playWhenReady = true
+            } catch (e: CancellationException) {
+                // Another video was chosen while this one was loading: not an error, and the
+                // state now belongs to that video.
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to prepare video ${video.videoId}: ${e.message}", e)
                 PlaybackStateStore.update {

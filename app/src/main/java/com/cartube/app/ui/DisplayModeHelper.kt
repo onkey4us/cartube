@@ -35,6 +35,16 @@ object DisplayModeHelper {
         return displayId != Display.DEFAULT_DISPLAY || widthDp < 1400 || inMultiWindow || inPip
     }
 
+    /**
+     * Only real picture-in-picture needs a TextureView. In the launcher's embedded windows
+     * (ActivityView virtual displays) a TextureView ties every video frame to a full UI redraw:
+     * measured on the C3005H_MX8Q that is ~36 ms per frame, so 30 fps video showed at ~21 fps.
+     * A SurfaceView hands frames straight to the compositor. See docs/DEVICE_PROFILE.md.
+     */
+    fun needsTextureView(activity: Activity): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity.isInPictureInPictureMode
+    }
+
     fun getLayoutMode(activity: Activity): LayoutMode {
         val widthDp = activity.resources.configuration.screenWidthDp
         return when {

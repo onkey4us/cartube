@@ -147,7 +147,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun attachPlayerToActiveView() {
         val player = CarPlaybackService.instance?.getPlayer()
-        val useTexture = DisplayModeHelper.isEmbeddedOrPip(this)
+        val useTexture = DisplayModeHelper.needsTextureView(this)
         val targetResizeMode = if (isFrameFull && isZoomCrop) {
             AspectRatioFrameLayout.RESIZE_MODE_ZOOM
         } else {
