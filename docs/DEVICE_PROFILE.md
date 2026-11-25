@@ -105,7 +105,7 @@ Không có decoder AV1 nào trên máy.
 
 ## CarTube trên xe lúc đo
 
-- Gói cài: `app.revanced.android.youtube` (đây là `applicationId` của CarTube), 1.1.1 (versionCode 13),
+- Gói cài: `app.revanced.android.youtube` (đây là `applicationId` của CarTube), 1.1.1 (versionCode 13) lúc đo; từ commit `1ff81f0` là 1.2.0 (versionCode 14),
   cập nhật lần cuối 2026-11-25 15:59, tức bản build từ nhánh `playback-buffer-prefetch`
 - Bộ nhớ khi đang phát: PSS tổng 138 MB; Java heap 24 MB; native heap 57 MB
 - Decoder đang dùng: `OMX.Freescale.std.video_decoder.avc.v3.hw-based`, luồng `avc1.4D401F` 1280x720@30
@@ -131,9 +131,24 @@ Không có decoder AV1 nào trên máy.
   - CPU theo luồng đo trong cửa sổ 10 giây: main thread 8,8%, `ExoPlayer:Playback` 17,9%, cả app 41% trên 500%.
     Con số 31-37% ở trên lấy từ ảnh chụp tức thời của `top`, vốn dao động mạnh; cách đo ổn định hơn
     (`schedstat`, 5 giây) cho bản cũ khoảng 13%
-  - còn lại: trong 5,5 giây có 12 khung hình bị trễ 80 ms rồi bù bằng khung 20 ms. Giả thuyết chưa kiểm chứng:
-    màn hình ảo của launcher khai báo 60 Hz trong khi màn hình thật là 50 Hz, nên ExoPlayer canh thời điểm
-    nhả khung hình theo sai nhịp vsync.
+  - đính chính (đo lại cùng ngày với video 30 fps): đổi sang `SurfaceView` **không** làm tăng số khung hình
+    hiện ra màn hình. Video 30 fps vẫn chỉ hiện 21-24 fps. Con số 23,1 fps ở trên là của video 24 fps.
+    Lợi ích thật của `SurfaceView` là app không còn phải vẽ lại giao diện theo từng khung hình video.
+- **Khung nhúng của launcher bị giới hạn khoảng 24-25 khung hình/giây.** Đo bằng
+  `dumpsys SurfaceFlinger --latency` khi phát video 30 fps trong khung nhúng:
+  - lớp video của CarTube: 24,4 fps; bề mặt của launcher chứa khung nhúng đó: 24,4 fps, cùng phân bố khoảng cách
+    khung hình (chủ yếu 40 ms, tức mỗi hai nhịp quét 50 Hz một lần)
+  - Google Maps trong khung nhúng của nó: 20 fps; `surfaceflinger` thường xuyên dùng 45-50% CPU
+  - giả thuyết "ExoPlayer canh theo 60 Hz" **sai**: thời điểm ExoPlayer yêu cầu hiện khung hình khớp hoàn toàn
+    với lưới 20 ms (50 Hz), không khớp lưới 16,67 ms
+  - hệ quả: video 24/25 fps gần như đủ khung hình; video 30 và 60 fps mất khoảng 20% trở lên và nhịp không đều.
+    Đây là giới hạn của đường hiển thị màn hình ảo trên xe, app không điều khiển được
+  - chưa đo: chế độ toàn màn hình trên màn hình chính ("Toàn xe") có đạt đủ 30 fps hay không
+- **Một lần tụt chất lượng xuống 144p-240p (chưa rõ nguyên nhân).** Bài `i4XmH13A7lI` lúc 16:40: bắt đầu ở
+  1920x804 (3,2 Mbps), 12 giây sau xuống 1280x536, 54 giây sau xuống 256x128 rồi giữ 426x178 đến hết bài; băng
+  thông ước lượng cuối bài 566 kbps trong khi các bài khác là 20-44 Mbps. Không có lần rebuffer nào. Bài kế tiếp
+  trở lại 720p sau 15 giây. Hoặc mạng 4G yếu thật trong 3,5 phút, hoặc YouTube bóp tốc độ luồng đó; một mẫu chưa
+  đủ kết luận. Xem lại bằng các dòng `FORMAT` và `bandwidthKbps` trong log `CarTubeHealth` nếu lặp lại.
 - **Khởi động bài chậm:** trong log, từ lúc dựng xong nguồn DASH đến lúc decoder khởi tạo mất khoảng 5 giây
   (16:00:44,5 đến 16:00:49,5). Mới có một mẫu, cần đo thêm.
 - **Lỗi giả khi đổi bài nhanh (đã sửa trong code, chưa build):** log có
