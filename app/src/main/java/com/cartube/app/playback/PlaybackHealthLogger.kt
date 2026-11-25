@@ -30,6 +30,8 @@ class PlaybackHealthLogger : AnalyticsListener {
 
     /** Call when a video starts loading; prints the summary of the one that just ended. */
     fun onNewVideo(newVideoId: String) {
+        // A retry of the same video (other source, same position) keeps its counters.
+        if (newVideoId == videoId) return
         logSummary()
         videoId = newVideoId
         hasBeenReady = false
@@ -39,14 +41,18 @@ class PlaybackHealthLogger : AnalyticsListener {
         rebufferTotalMs = 0L
         droppedFrames = 0
         videoFormat = null
+        videoDecoder = null
     }
 
     fun logSummary() {
         val id = videoId ?: return
         if (!hasBeenReady) return
+        // Include a stall that is still going on (Next pressed while the spinner was showing).
+        val stalledMs = rebufferTotalMs +
+            if (rebufferStartMs != 0L) SystemClock.elapsedRealtime() - rebufferStartMs else 0L
         Log.i(
             TAG,
-            "SUMMARY video=$id rebuffers=$rebufferCount stalledMs=$rebufferTotalMs " +
+            "SUMMARY video=$id rebuffers=$rebufferCount stalledMs=$stalledMs " +
                 "droppedFrames=$droppedFrames format=$videoFormat decoder=$videoDecoder " +
                 "bandwidthKbps=${lastBitrateEstimate / 1000}"
         )
@@ -55,7 +61,7 @@ class PlaybackHealthLogger : AnalyticsListener {
     override fun onPlaybackStateChanged(eventTime: AnalyticsListener.EventTime, state: Int) {
         when (state) {
             Player.STATE_IDLE -> {
-                rebufferStartMs = 0L
+                // A stall that ended in an error keeps counting until playback is back.
                 seekInFlight = false
             }
             Player.STATE_BUFFERING -> {

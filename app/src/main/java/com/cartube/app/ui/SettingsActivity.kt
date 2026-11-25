@@ -46,6 +46,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.swBlockAv1.isChecked = prefs.blockAv1
         binding.swBlockAv1.setOnCheckedChangeListener { _, isChecked ->
             prefs.blockAv1 = isChecked
+            CarPlaybackService.instance?.refreshTrackPreferences()
         }
 
         binding.swBgAudioOnly.isChecked = prefs.backgroundAudioOnly

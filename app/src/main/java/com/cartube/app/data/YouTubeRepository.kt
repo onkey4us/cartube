@@ -16,6 +16,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 
 data class FeedPage(
     val items: List<VideoItem>,
@@ -103,6 +105,25 @@ object YouTubeRepository {
     ): MediaItemFormatInfo = withContext(Dispatchers.IO) {
         fetchFormatWithFallback(videoId, clickTrackingParams)
             ?: throw IllegalStateException("Không lấy được luồng phát cho video này.")
+    }
+
+    /**
+     * True when YouTube answers at all. Tells a dead link (tunnel, phone hotspot without 4G: the
+     * Wi-Fi stays "connected") apart from a stream source that is broken while the internet works.
+     */
+    suspend fun isInternetReachable(): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val connection = URL("https://www.youtube.com/generate_204").openConnection() as HttpURLConnection
+            try {
+                connection.connectTimeout = 3_000
+                connection.readTimeout = 3_000
+                connection.instanceFollowRedirects = false
+                connection.useCaches = false
+                connection.responseCode > 0
+            } finally {
+                connection.disconnect()
+            }
+        }.getOrDefault(false)
     }
 
     /**

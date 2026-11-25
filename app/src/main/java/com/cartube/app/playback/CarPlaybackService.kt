@@ -55,6 +55,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
@@ -115,6 +116,12 @@ class CarPlaybackService : MediaSessionService() {
     private var prefetchDeferred: Deferred<MediaItemFormatInfo?>? = null
 
     private val healthLogger = PlaybackHealthLogger()
+
+    // Recovery from connection errors (tunnels, 4G dead zones) without restarting the video
+    private var networkRecoveryJob: Job? = null
+    private var recoveringFromNetworkError: Boolean = false
+    private var sameSourceRetryCount: Int = 0
+    private var sourceReachedReady: Boolean = false
 
     private val sponsorTickRunnable = object : Runnable {
         override fun run() {
@@ -227,6 +234,11 @@ class CarPlaybackService : MediaSessionService() {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
                     rememberWorkingClient()
+                    sourceReachedReady = true
+                    if (recoveringFromNetworkError) {
+                        recoveringFromNetworkError = false
+                        PlaybackStateStore.update { it.copy(isLoading = false, statusNotice = null) }
+                    }
                 } else if (playbackState == Player.STATE_ENDED) {
                     // Played to the end: the strongest "I liked this" signal there is.
                     acceptCurrentVideo()
@@ -237,30 +249,12 @@ class CarPlaybackService : MediaSessionService() {
             override fun onPlayerError(error: PlaybackException) {
                 Log.e(TAG, "ExoPlayer error (${error.errorCodeName}): ${error.message}", error)
                 val current = PlaybackStateStore.state.value.currentVideo
-                if (current != null && errorRetryCount < MAX_ERROR_RETRIES) {
-                    errorRetryCount++
-                    Log.w(TAG, "Auto-switching YouTube client & retrying ($errorRetryCount/$MAX_ERROR_RETRIES)...")
-                    PlaybackStateStore.update {
-                        it.copy(
-                            isLoading = true,
-                            statusNotice = "Đang đổi nguồn phát (${errorRetryCount}/$MAX_ERROR_RETRIES)...",
-                            errorMessage = null
-                        )
-                    }
-                    YouTubeServiceManager.instance().switchNextClientNow()
-                    playVideoInternal(
-                        current,
-                        pushCurrentToHistory = false,
-                        resetRetry = false,
-                        chosenByUser = currentAccepted
-                    )
+                // Read now: the retry paths below stop the player, which loses the position.
+                val positionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+                if (current != null && isNetworkError(error)) {
+                    recoverFromNetworkError(current, positionMs, error.errorCodeName)
                 } else {
-                    PlaybackStateStore.update {
-                        it.copy(
-                            isLoading = false,
-                            errorMessage = "Không phát được video (${error.errorCodeName})"
-                        )
-                    }
+                    retryWithNextClient(current, positionMs, error.errorCodeName)
                 }
             }
         })
@@ -304,6 +298,97 @@ class CarPlaybackService : MediaSessionService() {
             .build()
 
         mainHandler.postDelayed(sponsorTickRunnable, SPONSOR_CHECK_INTERVAL_MS)
+    }
+
+    private fun isNetworkError(error: PlaybackException): Boolean {
+        return error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+            error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT
+    }
+
+    /** The source itself failed: move to the next YouTube client and continue where playback was. */
+    private fun retryWithNextClient(current: VideoItem?, positionMs: Long, errorCodeName: String) {
+        recoveringFromNetworkError = false
+        if (current != null && errorRetryCount < MAX_ERROR_RETRIES) {
+            errorRetryCount++
+            Log.w(TAG, "Auto-switching YouTube client & retrying ($errorRetryCount/$MAX_ERROR_RETRIES)...")
+            PlaybackStateStore.update {
+                it.copy(
+                    isLoading = true,
+                    statusNotice = "Đang đổi nguồn phát (${errorRetryCount}/$MAX_ERROR_RETRIES)...",
+                    errorMessage = null
+                )
+            }
+            YouTubeServiceManager.instance().switchNextClientNow()
+            playVideoInternal(
+                current,
+                pushCurrentToHistory = false,
+                resetRetry = false,
+                chosenByUser = currentAccepted,
+                startPositionMs = positionMs
+            )
+        } else {
+            PlaybackStateStore.update {
+                it.copy(
+                    isLoading = false,
+                    errorMessage = "Không phát được video ($errorCodeName)"
+                )
+            }
+        }
+    }
+
+    /**
+     * A connection error is usually the road (tunnel, 4G dead zone), not the source. While the
+     * internet is unreachable, keep the same source and position and wait; playback continues by
+     * itself once it is back. Only when the internet works and this source still cannot connect
+     * is the YouTube client switched.
+     */
+    private fun recoverFromNetworkError(current: VideoItem, positionMs: Long, errorCodeName: String) {
+        networkRecoveryJob?.cancel()
+        networkRecoveryJob = serviceScope.launch {
+            val startedAtMs = SystemClock.elapsedRealtime()
+            var internetWasDown = false
+            while (!YouTubeRepository.isInternetReachable()) {
+                if (SystemClock.elapsedRealtime() - startedAtMs > NETWORK_WAIT_MAX_MS) {
+                    Log.w(TAG, "Network still down after ${NETWORK_WAIT_MAX_MS / 60_000L} min, giving up")
+                    PlaybackStateStore.update {
+                        it.copy(
+                            isLoading = false,
+                            statusNotice = null,
+                            errorMessage = "Mất kết nối mạng quá lâu. Chọn lại video để phát tiếp."
+                        )
+                    }
+                    return@launch
+                }
+                if (!internetWasDown) {
+                    internetWasDown = true
+                    Log.w(TAG, "Network lost ($errorCodeName) at ${positionMs}ms, waiting for it to return")
+                    PlaybackStateStore.update {
+                        it.copy(
+                            isLoading = true,
+                            statusNotice = "Mất mạng, đang chờ kết nối lại...",
+                            errorMessage = null
+                        )
+                    }
+                }
+                delay(NETWORK_RETRY_DELAY_MS)
+            }
+
+            // A source that never started while the internet works is a broken source: switch at once.
+            val canReuseSource = exoPlayer.playbackState == Player.STATE_IDLE && exoPlayer.mediaItemCount > 0
+            val worthReusing = internetWasDown ||
+                (sourceReachedReady && sameSourceRetryCount < MAX_SAME_SOURCE_RETRIES)
+            if (canReuseSource && worthReusing) {
+                if (!internetWasDown) sameSourceRetryCount++
+                Log.i(TAG, "Resuming same source at ${positionMs}ms (internetWasDown=$internetWasDown)")
+                recoveringFromNetworkError = true
+                PlaybackStateStore.update {
+                    it.copy(isLoading = true, statusNotice = "Đang kết nối lại...", errorMessage = null)
+                }
+                exoPlayer.prepare()
+            } else {
+                retryWithNextClient(current, positionMs, errorCodeName)
+            }
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
@@ -419,6 +504,12 @@ class CarPlaybackService : MediaSessionService() {
         startPositionMs: Long = 0L
     ) {
         nextActionJob?.cancel()
+        networkRecoveryJob?.cancel()
+        recoveringFromNetworkError = false
+        sourceReachedReady = false
+        if (PlaybackStateStore.state.value.currentVideo?.videoId != video.videoId) {
+            sameSourceRetryCount = 0
+        }
         healthLogger.onNewVideo(video.videoId)
         var effectiveStartMs = if (video.isLive) 0L else startPositionMs.coerceAtLeast(0L)
         // A retry of the same video (client switch after an error) keeps its listening progress.
@@ -796,6 +887,11 @@ class CarPlaybackService : MediaSessionService() {
         setVideoEnabled(!audioOnly)
     }
 
+    /** Re-reads codec / quality settings (e.g. the "Chặn AV1" switch) for the video playing now. */
+    fun refreshTrackPreferences() {
+        applyTrackPreferences()
+    }
+
     fun updateMaxVideoHeight(maxHeight: Int) {
         prefs.maxVideoHeight = maxHeight
         applyTrackPreferences()
@@ -1027,7 +1123,7 @@ class CarPlaybackService : MediaSessionService() {
      * change can start buffering at once. Only the stream info is fetched (a few KB), no media.
      */
     private fun maybePrefetchNext(positionMs: Long, durationMs: Long) {
-        if (durationMs <= 0L || durationMs - positionMs > PREFETCH_BEFORE_END_MS) return
+        if (durationMs <= 0L || effectiveEndMs(durationMs) - positionMs > PREFETCH_BEFORE_END_MS) return
         val current = PlaybackStateStore.state.value.currentVideo ?: return
         if (current.isLive) return
         val next = upNextQueue.firstOrNull() ?: return
@@ -1052,6 +1148,18 @@ class CarPlaybackService : MediaSessionService() {
         }
     }
 
+    /**
+     * Where playback of the current video really stops: SponsorBlock jumps over a segment that
+     * runs to the end (typically the outro), so the video is over when that segment starts.
+     */
+    private fun effectiveEndMs(durationMs: Long): Long {
+        if (!prefs.sponsorBlockEnabled) return durationMs
+        val closing = activeSegments
+            .filter { it.endMs >= durationMs - OUTRO_REACHES_END_MS && it.startMs < durationMs }
+            .minOfOrNull { it.startMs }
+        return closing?.coerceAtLeast(0L) ?: durationMs
+    }
+
     /** Hands over the prefetched stream info for [videoId] once; null when there is none usable. */
     private suspend fun takePrefetchedFormat(videoId: String): MediaItemFormatInfo? {
         if (prefetchVideoId != videoId) return null
@@ -1071,7 +1179,7 @@ class CarPlaybackService : MediaSessionService() {
         // would make MediaServiceCore re-fetch this video's player response.
         val durationMs = exoPlayer.duration
         if (prefetchDuringVideoId == video.videoId &&
-            durationMs > 0L && durationMs - exoPlayer.currentPosition <= PREFETCH_BEFORE_END_MS
+            durationMs > 0L && effectiveEndMs(durationMs) - exoPlayer.currentPosition <= PREFETCH_BEFORE_END_MS
         ) {
             return
         }
@@ -1158,6 +1266,12 @@ class CarPlaybackService : MediaSessionService() {
         private const val MAX_BUFFER_BYTES = 80 * 1024 * 1024
         private const val PREFETCH_BEFORE_END_MS = 30_000L
         private const val PREFETCH_MAX_AGE_MS = 30 * 60_000L
+        private const val OUTRO_REACHES_END_MS = 5_000L
+
+        // Connection-error recovery
+        private const val NETWORK_RETRY_DELAY_MS = 3_000L
+        private const val NETWORK_WAIT_MAX_MS = 30 * 60_000L
+        private const val MAX_SAME_SOURCE_RETRIES = 2
 
         @Volatile
         var instance: CarPlaybackService? = null
