@@ -352,7 +352,7 @@ class PlayerActivity : AppCompatActivity() {
                     highlightFirst = false,
                     titleTextSizeSp = 13.5f,
                     subtitleTextSizeSp = 12f,
-                    titleMaxLines = 4,
+                    titleMaxLines = 3,
                     showSubtitle = false,
                     horizontalPaddingDp = 0,
                     thumbGapDp = 10,
