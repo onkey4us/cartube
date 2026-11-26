@@ -1,6 +1,7 @@
 package com.cartube.app.ui
 
 import android.util.TypedValue
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -10,6 +11,7 @@ import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.cartube.app.R
 import com.cartube.app.data.VideoItem
 import com.cartube.app.databinding.ItemUpNextVideoBinding
+import kotlin.math.roundToInt
 
 class UpNextAdapter(
     private val onClick: (VideoItem, Int) -> Unit
@@ -21,6 +23,11 @@ class UpNextAdapter(
     private var highlightFirst: Boolean = true
     private var titleTextSizeSp: Float = 15f
     private var subtitleTextSizeSp: Float = 13f
+    private var titleMaxLines: Int = 2
+    private var showSubtitle: Boolean = true
+    private var horizontalPaddingDp: Int = 8
+    private var thumbGapDp: Int = 12
+    private var gravityTop: Boolean = false
 
     fun submitList(newItems: List<VideoItem>) {
         // The playback state is re-emitted every second; only redraw when the list really changed,
@@ -36,13 +43,23 @@ class UpNextAdapter(
         rowHeightDp: Int,
         highlightFirst: Boolean,
         titleTextSizeSp: Float = 15f,
-        subtitleTextSizeSp: Float = 13f
+        subtitleTextSizeSp: Float = 13f,
+        titleMaxLines: Int = 2,
+        showSubtitle: Boolean = true,
+        horizontalPaddingDp: Int = 8,
+        thumbGapDp: Int = 12,
+        gravityTop: Boolean = false
     ) {
         if (this.thumbWidthDp == thumbWidthDp &&
             this.rowHeightDp == rowHeightDp &&
             this.highlightFirst == highlightFirst &&
             this.titleTextSizeSp == titleTextSizeSp &&
-            this.subtitleTextSizeSp == subtitleTextSizeSp
+            this.subtitleTextSizeSp == subtitleTextSizeSp &&
+            this.titleMaxLines == titleMaxLines &&
+            this.showSubtitle == showSubtitle &&
+            this.horizontalPaddingDp == horizontalPaddingDp &&
+            this.thumbGapDp == thumbGapDp &&
+            this.gravityTop == gravityTop
         ) {
             return
         }
@@ -51,6 +68,11 @@ class UpNextAdapter(
         this.highlightFirst = highlightFirst
         this.titleTextSizeSp = titleTextSizeSp
         this.subtitleTextSizeSp = subtitleTextSizeSp
+        this.titleMaxLines = titleMaxLines
+        this.showSubtitle = showSubtitle
+        this.horizontalPaddingDp = horizontalPaddingDp
+        this.thumbGapDp = thumbGapDp
+        this.gravityTop = gravityTop
         notifyDataSetChanged()
     }
 
@@ -79,17 +101,34 @@ class UpNextAdapter(
                 TypedValue.COMPLEX_UNIT_DIP,
                 thumbWidthDp.toFloat(),
                 metrics
-            ).toInt()
-            val hPx = (wPx * 9) / 16
+            ).roundToInt()
+            val hPx = (wPx * 9f / 16f).roundToInt()
             val rowPx = TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP,
                 rowHeightDp.toFloat(),
                 metrics
-            ).toInt()
+            ).roundToInt()
+            val hPadPx = TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP,
+                horizontalPaddingDp.toFloat(),
+                metrics
+            ).roundToInt()
+            val gapPx = TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP,
+                thumbGapDp.toFloat(),
+                metrics
+            ).roundToInt()
 
             binding.upNextRowRoot.layoutParams = binding.upNextRowRoot.layoutParams.apply {
                 height = rowPx
             }
+            binding.upNextRowRoot.setPadding(
+                hPadPx,
+                binding.upNextRowRoot.paddingTop,
+                hPadPx,
+                binding.upNextRowRoot.paddingBottom
+            )
+            binding.upNextRowRoot.gravity = if (gravityTop) Gravity.TOP else Gravity.CENTER_VERTICAL
             binding.upNextRowRoot.isSelected = highlightFirst && position == 0
 
             binding.thumbContainer.layoutParams = binding.thumbContainer.layoutParams.apply {
@@ -97,8 +136,16 @@ class UpNextAdapter(
                 height = hPx
             }
 
-            binding.tvTitle.text = item.title
+            binding.upNextTextContainer.layoutParams =
+                (binding.upNextTextContainer.layoutParams as ViewGroup.MarginLayoutParams).apply {
+                    marginStart = gapPx
+                }
+
+            binding.tvTitle.maxLines = titleMaxLines
             binding.tvTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, titleTextSizeSp)
+            binding.tvTitle.text = item.title
+
+            binding.tvSubtitle.visibility = if (showSubtitle) View.VISIBLE else View.GONE
             binding.tvSubtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleTextSizeSp)
             binding.tvSubtitle.text = when {
                 item.author.isNotBlank() -> item.author

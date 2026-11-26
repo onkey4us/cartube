@@ -199,10 +199,13 @@ class PlayerActivity : AppCompatActivity() {
 
             binding.narrowTopBar.visibility = View.GONE
             binding.largeBelowVideoPanel.visibility = View.GONE
+            binding.midVideoSeekRow.visibility = View.GONE
+            binding.midBelowVideoPanel.visibility = View.GONE
             binding.narrowBelowVideoPanel.visibility = View.GONE
             binding.narrowVideoProgress.visibility = View.GONE
             binding.upNextDivider.visibility = View.GONE
             binding.upNextPanel.visibility = View.GONE
+            binding.tvUpNextHeader.setTextColor(ContextCompat.getColor(this, R.color.car_accent))
 
             binding.leftMainPane.setPadding(0, 0, 0, 0)
             binding.leftMainPane.layoutParams = LinearLayout.LayoutParams(
@@ -235,9 +238,9 @@ class PlayerActivity : AppCompatActivity() {
             return
         }
 
-        // ==================== SPLIT WATCH MODES (B & C) ====================
-        when (mode) {
-            DisplayModeHelper.LayoutMode.PIP_COMPACT -> {
+        // ==================== SPLIT WATCH MODES (B, MID2 & C) ====================
+        when {
+            mode == DisplayModeHelper.LayoutMode.PIP_COMPACT -> {
                 // ==================== MODE C: NARROW (~360x712) ====================
                 usesOverlayControls = false
                 uiHandler.removeCallbacks(hideControlsRunnable)
@@ -253,6 +256,8 @@ class PlayerActivity : AppCompatActivity() {
 
                 binding.narrowTopBar.visibility = View.VISIBLE
                 binding.largeBelowVideoPanel.visibility = View.GONE
+                binding.midVideoSeekRow.visibility = View.GONE
+                binding.midBelowVideoPanel.visibility = View.GONE
                 binding.narrowBelowVideoPanel.visibility = View.VISIBLE
                 binding.narrowVideoProgress.visibility = View.VISIBLE
 
@@ -285,6 +290,7 @@ class PlayerActivity : AppCompatActivity() {
                 )
                 binding.tvUpNextHeader.text = getString(R.string.up_next_short)
                 binding.tvUpNextHeader.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                binding.tvUpNextHeader.setTextColor(ContextCompat.getColor(this, R.color.car_accent))
                 upNextAdapter.configureStyle(
                     thumbWidthDp = 112,
                     rowHeightDp = 76,
@@ -294,15 +300,73 @@ class PlayerActivity : AppCompatActivity() {
                 )
             }
 
-            DisplayModeHelper.LayoutMode.PIP_LARGE,
-            DisplayModeHelper.LayoutMode.FULLSCREEN -> {
-                // ==================== MODE B: LARGE (~1061x712) & WIDE (1920x720) ====================
+            mode == DisplayModeHelper.LayoutMode.PIP_LARGE && heightDp >= 620 -> {
+                // ==================== MID2: EMBEDDED MIDDLE WINDOW (~1061x712 / 1082x712) ====================
+                usesOverlayControls = false
+                uiHandler.removeCallbacks(hideControlsRunnable)
+                binding.controlsOverlay.visibility = View.GONE
+
+                binding.playerRoot.orientation = LinearLayout.HORIZONTAL
+                binding.narrowTopBar.visibility = View.GONE
+                binding.narrowBelowVideoPanel.visibility = View.GONE
+                binding.narrowVideoProgress.visibility = View.GONE
+                binding.largeBelowVideoPanel.visibility = View.GONE
+                binding.midVideoSeekRow.visibility = View.VISIBLE
+                binding.midBelowVideoPanel.visibility = View.VISIBLE
+
+                val videoWidthDp = 760.coerceAtMost((widthDp - 292).coerceAtLeast(480))
+                val videoHeightDp = Math.round(videoWidthDp * 9f / 16f)
+
+                binding.leftMainPane.setPadding(dpToPx(16), dpToPx(16), dpToPx(16), dpToPx(12))
+                binding.leftMainPane.layoutParams = LinearLayout.LayoutParams(
+                    dpToPx(videoWidthDp + 32),
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0f
+                )
+
+                binding.videoStageFrame.setBackgroundResource(R.drawable.bg_rounded_video_16)
+                binding.videoStageFrame.clipToOutline = true
+                binding.videoStageFrame.layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dpToPx(videoHeightDp),
+                    0f
+                )
+
+                binding.upNextDivider.visibility = View.GONE
+                binding.upNextPanel.visibility = View.VISIBLE
+                binding.upNextPanel.setPadding(0, dpToPx(16), dpToPx(12), 0)
+                binding.upNextPanel.layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    1f
+                )
+                binding.tvUpNextHeader.text = getString(R.string.up_next_short)
+                binding.tvUpNextHeader.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                binding.tvUpNextHeader.setTextColor(ContextCompat.getColor(this, R.color.car_text_primary))
+                upNextAdapter.configureStyle(
+                    thumbWidthDp = 120,
+                    rowHeightDp = 78,
+                    highlightFirst = false,
+                    titleTextSizeSp = 13.5f,
+                    subtitleTextSizeSp = 12f,
+                    titleMaxLines = 4,
+                    showSubtitle = false,
+                    horizontalPaddingDp = 0,
+                    thumbGapDp = 10,
+                    gravityTop = true
+                )
+            }
+
+            else -> {
+                // ==================== MODE B: LARGE (1080x580) & WIDE (1920x720) ====================
                 usesOverlayControls = true
                 binding.playerRoot.orientation = LinearLayout.HORIZONTAL
 
                 binding.narrowTopBar.visibility = View.GONE
                 binding.narrowBelowVideoPanel.visibility = View.GONE
                 binding.narrowVideoProgress.visibility = View.GONE
+                binding.midVideoSeekRow.visibility = View.GONE
+                binding.midBelowVideoPanel.visibility = View.GONE
                 binding.largeBelowVideoPanel.visibility = View.VISIBLE
 
                 // In Mode B, overlay has ONLY Back + Rewind 10s / Play-Pause / Forward 10s + SeekBar (ZERO duplicates)
@@ -351,6 +415,7 @@ class PlayerActivity : AppCompatActivity() {
                 )
                 binding.tvUpNextHeader.text = getString(R.string.up_next_autoplay)
                 binding.tvUpNextHeader.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                binding.tvUpNextHeader.setTextColor(ContextCompat.getColor(this, R.color.car_accent))
                 upNextAdapter.configureStyle(
                     thumbWidthDp = 128,
                     rowHeightDp = 84,
@@ -530,6 +595,14 @@ class PlayerActivity : AppCompatActivity() {
         binding.btnLargeVoice.setOnClickListener { launchVoiceSearchInPlayer() }
         binding.btnLargeNext.setOnClickListener { CarPlaybackService.instance?.playNext() }
 
+        // MID2 (Embedded Middle Window) below-video controls
+        binding.btnMidAudioOnly.setOnClickListener { toggleAudioOnly() }
+        binding.btnMidQuality.setOnClickListener { cycleQuality() }
+        binding.btnMidFullscreen.setOnClickListener { setFrameFullMode(true) }
+        binding.btnMidPrev.setOnClickListener { CarPlaybackService.instance?.playPrevious() }
+        binding.btnMidPlayPause.setOnClickListener { togglePlayPause() }
+        binding.btnMidNext.setOnClickListener { CarPlaybackService.instance?.playNext() }
+
         // Mode C (Narrow Split) top 5-icon bar & below-video controls
         binding.btnNarrowBack.setOnClickListener { finish() }
         binding.btnNarrowHome.setOnClickListener { openMainTab(MainActivity.TAB_HOME) }
@@ -546,12 +619,13 @@ class PlayerActivity : AppCompatActivity() {
         binding.btnNarrowAudioOnly.setOnClickListener { toggleAudioOnly() }
         binding.btnNarrowWholeCar.setOnClickListener { popOutToMainCarDisplay() }
 
-        // SeekBars (Overlay for Mode B/Frame-Full & Narrow for Mode C)
+        // SeekBars (Overlay for Mode B/Frame-Full, MID2 & Narrow for Mode C)
         val seekListener = object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
                     val formatted = VideoAdapter.formatDuration(progress.toLong())
                     binding.tvOverlayCurrentTime.text = formatted
+                    binding.tvMidCurrentTime.text = formatted
                     binding.tvNarrowCurrentTime.text = formatted
                 }
             }
@@ -570,6 +644,7 @@ class PlayerActivity : AppCompatActivity() {
             }
         }
         binding.overlaySeekBar.setOnSeekBarChangeListener(seekListener)
+        binding.midSeekBar.setOnSeekBarChangeListener(seekListener)
         binding.narrowSeekBar.setOnSeekBarChangeListener(seekListener)
     }
 
@@ -656,6 +731,8 @@ class PlayerActivity : AppCompatActivity() {
                 binding.tvOverlayChannel.text = channel
                 binding.tvLargeTitle.text = title
                 binding.tvLargeMeta.text = metaText
+                binding.tvMidTitle.text = title
+                binding.tvMidChannel.text = channel
                 binding.tvNarrowTitle.text = title
                 binding.tvNarrowChannel.text = channel
 
@@ -663,6 +740,7 @@ class PlayerActivity : AppCompatActivity() {
 
                 val playIcon = if (state.isPlaying) R.drawable.ic_pause else R.drawable.ic_play
                 binding.btnOverlayPlayPause.setImageResource(playIcon)
+                binding.btnMidPlayPause.setImageResource(playIcon)
                 binding.btnNarrowPlayPause.setImageResource(playIcon)
 
                 upNextAdapter.submitList(state.upNextVideos)
@@ -692,6 +770,7 @@ class PlayerActivity : AppCompatActivity() {
         val maxH = prefs.maxVideoHeight
         val label = if (maxH <= 0) getString(R.string.action_quality_auto) else "${maxH}p"
         binding.tvLargeQuality.text = label
+        binding.tvMidQuality.text = label
         binding.tvOverlayQuality.text = label
     }
 
@@ -703,6 +782,9 @@ class PlayerActivity : AppCompatActivity() {
 
         binding.btnLargeAudioOnly.isSelected = isAudio
         binding.tvLargeAudioOnly.text = label
+
+        binding.btnMidAudioOnly.isSelected = isAudio
+        binding.tvMidAudioOnly.text = label
 
         binding.btnNarrowAudioOnly.isSelected = isAudio
         binding.tvNarrowAudioOnly.text = label
@@ -726,6 +808,11 @@ class PlayerActivity : AppCompatActivity() {
             binding.overlaySeekBar.progress = posInt
             binding.tvOverlayCurrentTime.text = curText
             binding.tvOverlayTotalTime.text = totText
+
+            binding.midSeekBar.max = maxInt
+            binding.midSeekBar.progress = posInt
+            binding.tvMidCurrentTime.text = curText
+            binding.tvMidTotalTime.text = totText
 
             binding.narrowSeekBar.max = maxInt
             binding.narrowSeekBar.progress = posInt

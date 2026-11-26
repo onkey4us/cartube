@@ -186,6 +186,52 @@
                 android:progressDrawable="@drawable/bg_thin_progress"
                 android:visibility="gone" />
 
+            <!-- MID2 Bottom Seekbar + Timestamps Overlay Row -->
+            <LinearLayout
+                android:id="@+id/midVideoSeekRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:background="@drawable/bg_video_bottom_scrim"
+                android:gravity="center_vertical"
+                android:minHeight="48dp"
+                android:orientation="horizontal"
+                android:paddingHorizontal="14dp"
+                android:paddingTop="10dp"
+                android:paddingBottom="6dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/tvMidCurrentTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0:00"
+                    android:textColor="@color/car_text_primary"
+                    android:textSize="13sp" />
+
+                <SeekBar
+                    android:id="@+id/midSeekBar"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginHorizontal="10dp"
+                    android:layout_weight="1"
+                    android:maxHeight="6dp"
+                    android:minHeight="6dp"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:progressDrawable="@drawable/bg_seekbar_progress"
+                    android:splitTrack="false"
+                    android:thumb="@drawable/bg_seekbar_thumb" />
+
+                <TextView
+                    android:id="@+id/tvMidTotalTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0:00"
+                    android:textColor="@color/car_text_primary"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
             <!-- SponsorBlock / Quick Seek / Error Notice Pill -->
             <TextView
                 android:id="@+id/tvStatusNotice"
@@ -753,6 +799,193 @@
                     android:scaleType="fitCenter"
                     android:src="@drawable/ic_next"
                     app:tint="@color/car_text_primary" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- MID2 (Embedded Middle Window ~1061x712 / 1082x712) Below-Video Panel -->
+        <LinearLayout
+            android:id="@+id/midBelowVideoPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingTop="14dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tvMidTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/car_text_primary"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvMidChannel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/car_text_secondary"
+                android:textSize="14sp" />
+
+            <!-- Control Row: Left Pills + Right Transport Buttons -->
+            <LinearLayout
+                android:id="@+id/midControlRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <!-- Left Pills Container -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:id="@+id/btnMidAudioOnly"
+                        android:layout_width="wrap_content"
+                        android:layout_height="56dp"
+                        android:layout_marginEnd="10dp"
+                        android:background="@drawable/bg_pill_action"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:minHeight="48dp"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="16dp">
+
+                        <ImageView
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:contentDescription="@string/action_audio_only"
+                            android:duplicateParentState="true"
+                            android:src="@drawable/ic_headphones"
+                            app:tint="@color/pill_action_tint" />
+
+                        <TextView
+                            android:id="@+id/tvMidAudioOnly"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:duplicateParentState="true"
+                            android:maxLines="1"
+                            android:text="@string/action_audio_only"
+                            android:textColor="@color/pill_action_tint"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/btnMidQuality"
+                        android:layout_width="wrap_content"
+                        android:layout_height="56dp"
+                        android:layout_marginEnd="10dp"
+                        android:background="@drawable/bg_pill_action"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:minHeight="48dp"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="16dp">
+
+                        <ImageView
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:contentDescription="@string/action_quality_auto"
+                            android:src="@drawable/ic_hd"
+                            app:tint="@color/car_text_primary" />
+
+                        <TextView
+                            android:id="@+id/tvMidQuality"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:maxLines="1"
+                            android:text="@string/action_quality_auto"
+                            android:textColor="@color/car_text_primary"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/btnMidFullscreen"
+                        android:layout_width="wrap_content"
+                        android:layout_height="56dp"
+                        android:background="@drawable/bg_pill_action"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:minHeight="48dp"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="16dp">
+
+                        <ImageView
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:contentDescription="@string/action_fullscreen"
+                            android:src="@drawable/ic_fullscreen"
+                            app:tint="@color/car_text_primary" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:maxLines="1"
+                            android:text="@string/action_fullscreen"
+                            android:textColor="@color/car_text_primary"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Right Transport Buttons -->
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <ImageButton
+                        android:id="@+id/btnMidPrev"
+                        android:layout_width="64dp"
+                        android:layout_height="64dp"
+                        android:background="@drawable/bg_circle_elevated"
+                        android:contentDescription="Video trước"
+                        android:padding="18dp"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/ic_prev"
+                        app:tint="@color/car_text_primary" />
+
+                    <ImageButton
+                        android:id="@+id/btnMidPlayPause"
+                        android:layout_width="84dp"
+                        android:layout_height="84dp"
+                        android:layout_marginHorizontal="16dp"
+                        android:background="@drawable/bg_circle_red"
+                        android:contentDescription="Phát hoặc tạm dừng"
+                        android:padding="24dp"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/ic_pause"
+                        app:tint="@color/car_text_primary" />
+
+                    <ImageButton
+                        android:id="@+id/btnMidNext"
+                        android:layout_width="64dp"
+                        android:layout_height="64dp"
+                        android:background="@drawable/bg_circle_elevated"
+                        android:contentDescription="Video tiếp theo"
+                        android:padding="18dp"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/ic_next"
+                        app:tint="@color/car_text_primary" />
+                </LinearLayout>
             </LinearLayout>
         </LinearLayout>
 
