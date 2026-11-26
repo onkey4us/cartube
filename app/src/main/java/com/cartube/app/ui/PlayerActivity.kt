@@ -205,6 +205,7 @@ class PlayerActivity : AppCompatActivity() {
             binding.narrowVideoProgress.visibility = View.GONE
             binding.upNextDivider.visibility = View.GONE
             binding.upNextPanel.visibility = View.GONE
+            binding.btnMidVoice.visibility = View.GONE
             binding.tvUpNextHeader.setTextColor(ContextCompat.getColor(this, R.color.car_accent))
 
             binding.leftMainPane.setPadding(0, 0, 0, 0)
@@ -291,6 +292,7 @@ class PlayerActivity : AppCompatActivity() {
                 binding.tvUpNextHeader.text = getString(R.string.up_next_short)
                 binding.tvUpNextHeader.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 binding.tvUpNextHeader.setTextColor(ContextCompat.getColor(this, R.color.car_accent))
+                binding.btnMidVoice.visibility = View.GONE
                 upNextAdapter.configureStyle(
                     thumbWidthDp = 112,
                     rowHeightDp = 76,
@@ -343,6 +345,7 @@ class PlayerActivity : AppCompatActivity() {
                 binding.tvUpNextHeader.text = getString(R.string.up_next_short)
                 binding.tvUpNextHeader.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 binding.tvUpNextHeader.setTextColor(ContextCompat.getColor(this, R.color.car_text_primary))
+                binding.btnMidVoice.visibility = View.VISIBLE
                 upNextAdapter.configureStyle(
                     thumbWidthDp = 120,
                     rowHeightDp = 78,
@@ -416,6 +419,7 @@ class PlayerActivity : AppCompatActivity() {
                 binding.tvUpNextHeader.text = getString(R.string.up_next_autoplay)
                 binding.tvUpNextHeader.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 binding.tvUpNextHeader.setTextColor(ContextCompat.getColor(this, R.color.car_accent))
+                binding.btnMidVoice.visibility = View.GONE
                 upNextAdapter.configureStyle(
                     thumbWidthDp = 128,
                     rowHeightDp = 84,
@@ -602,6 +606,7 @@ class PlayerActivity : AppCompatActivity() {
         binding.btnMidPrev.setOnClickListener { CarPlaybackService.instance?.playPrevious() }
         binding.btnMidPlayPause.setOnClickListener { togglePlayPause() }
         binding.btnMidNext.setOnClickListener { CarPlaybackService.instance?.playNext() }
+        binding.btnMidVoice.setOnClickListener { launchVoiceSearchInPlayer() }
 
         // Mode C (Narrow Split) top 5-icon bar & below-video controls
         binding.btnNarrowBack.setOnClickListener { finish() }

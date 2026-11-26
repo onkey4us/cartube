@@ -1234,18 +1234,40 @@
         android:paddingHorizontal="16dp"
         android:paddingTop="14dp">
 
-        <TextView
-            android:id="@+id/tvUpNextHeader"
+        <LinearLayout
+            android:id="@+id/upNextHeaderRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="8dp"
-            android:ellipsize="end"
-            android:letterSpacing="0.05"
-            android:maxLines="1"
-            android:text="@string/up_next_autoplay"
-            android:textColor="@color/car_accent"
-            android:textSize="14sp"
-            android:textStyle="bold" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tvUpNextHeader"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:letterSpacing="0.05"
+                android:maxLines="1"
+                android:text="@string/up_next_autoplay"
+                android:textColor="@color/car_accent"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <ImageButton
+                android:id="@+id/btnMidVoice"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_circle_red"
+                android:contentDescription="Tìm bằng giọng nói"
+                android:padding="13dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_mic"
+                android:visibility="gone"
+                app:tint="@color/car_text_primary" />
+        </LinearLayout>
 
         <LinearLayout
             android:id="@+id/upNextLoadingRow"
